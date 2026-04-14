@@ -1,7 +1,8 @@
 import express from 'express'
-import bcrypt from 'bcrypt'
+import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import pool from '../db.js'
+import User from '../models/User.js'
 
 const router = express.Router()
 const JWT_SECRET = process.env.JWT_SECRET || 'peer-review-secret-key-2024'
@@ -18,35 +19,37 @@ async function queryDB(sql, params = []) {
 }
 
 router.post('/register', async (req, res) => {
-  const { email, nombres, apellidoPaterno, apellidoMaterno, rol, organizacion, password } = req.body
+  const { email, nombres, apellidoPaterno, apellidoMaterno, rol, organizacion, password, tags } = req.body
 
   if (!email || !nombres || !apellidoPaterno || !apellidoMaterno || !rol || !organizacion || !password) {
     return res.status(400).json({ message: 'Todos los campos son requeridos' })
   }
 
-  let conn
   try {
-    conn = await pool.getConnection()
-    const existingUser = await conn.query('SELECT id FROM usuarios WHERE email = ?', [email])
-    
-    if (existingUser && existingUser.length > 0) {
+    const existingUser = await User.findOne({ email })
+    if (existingUser) {
       return res.status(400).json({ message: 'El correo electrónico ya está registrado' })
     }
 
     const hashedPassword = await bcrypt.hash(password, 10)
 
-    await conn.query(
-      `INSERT INTO usuarios (email, nombres, apellido_paterno, apellido_materno, rol, organizacion, password) 
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [email, nombres, apellidoPaterno, apellidoMaterno, rol, organizacion, hashedPassword]
-    )
+    const newUser = new User({
+      email,
+      nombres,
+      apellido_paterno: apellidoPaterno,
+      apellido_materno: apellidoMaterno,
+      rol,
+      organizacion,
+      tags: tags || [],
+      password: hashedPassword
+    })
+
+    await newUser.save()
 
     res.status(201).json({ message: 'Usuario registrado exitosamente' })
   } catch (error) {
     console.error('Error en registro:', error)
     res.status(500).json({ message: 'Error al registrar usuario' })
-  } finally {
-    if (conn) conn.release()
   }
 })
 
@@ -57,24 +60,19 @@ router.post('/login', async (req, res) => {
     return res.status(400).json({ message: 'Correo y contraseña son requeridos' })
   }
 
-  let conn
   try {
-    conn = await pool.getConnection()
-    const users = await conn.query('SELECT * FROM usuarios WHERE email = ?', [email])
-    
-    if (!users || users.length === 0) {
+    const user = await User.findOne({ email })
+    if (!user) {
       return res.status(401).json({ message: 'Usuario no encontrado' })
     }
 
-    const user = users[0]
     const validPassword = await bcrypt.compare(password, user.password)
-    
     if (!validPassword) {
       return res.status(401).json({ message: 'Contraseña incorrecta' })
     }
 
     const token = jwt.sign(
-      { id: user.id, email: user.email, rol: user.rol },
+      { id: user._id.toString(), email: user.email, rol: user.rol },
       JWT_SECRET,
       { expiresIn: '24h' }
     )
@@ -82,20 +80,19 @@ router.post('/login', async (req, res) => {
     res.json({
       token,
       user: {
-        id: user.id,
+        id: user._id,
         email: user.email,
         nombres: user.nombres,
         apellidoPaterno: user.apellido_paterno,
         apellidoMaterno: user.apellido_materno,
         rol: user.rol,
-        organizacion: user.organizacion
+        organizacion: user.organizacion,
+        tags: user.tags
       }
     })
   } catch (error) {
     console.error('Error en login:', error)
     res.status(500).json({ message: 'Error al iniciar sesión' })
-  } finally {
-    if (conn) conn.release()
   }
 })
 
@@ -107,33 +104,29 @@ router.get('/me', async (req, res) => {
 
   const token = authHeader.split(' ')[1]
 
-  let conn
   try {
     const decoded = jwt.verify(token, JWT_SECRET)
-    conn = await pool.getConnection()
-    const users = await conn.query('SELECT id, email, nombres, apellido_paterno, apellido_materno, rol, organizacion FROM usuarios WHERE id = ?', [decoded.id])
+    const user = await User.findById(decoded.id).select('-password')
     
-    if (!users || users.length === 0) {
+    if (!user) {
       return res.status(401).json({ message: 'Usuario no encontrado' })
     }
 
-    const user = users[0]
     res.json({
       user: {
-        id: user.id,
+        id: user._id,
         email: user.email,
         nombres: user.nombres,
         apellidoPaterno: user.apellido_paterno,
         apellidoMaterno: user.apellido_materno,
         rol: user.rol,
-        organizacion: user.organizacion
+        organizacion: user.organizacion,
+        tags: user.tags
       }
     })
   } catch (error) {
     console.error('Error en /me:', error)
     res.status(401).json({ message: 'Token inválido' })
-  } finally {
-    if (conn) conn.release()
   }
 })
 

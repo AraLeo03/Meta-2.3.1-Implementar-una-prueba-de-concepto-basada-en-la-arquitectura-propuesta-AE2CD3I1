@@ -1,0 +1,6 @@
+#18 CANCELED
+------
+ > [backend] exporting to image:
+------
+[+] build 0/2
+ - Image dashboardprincipal-backend  Building           12.3s - Image dashboardprincipal-frontend Building           12.3starget backend: failed to solve: failed to prepare extraction snapshot "extract-341274997-bWWm sha256:0f1c3ee0e72bf16baca3773f49f1f7def6229508a36513464902059291402726": parent snapshot sha256:228fdabd7c7dad5a11dd73ab717bb2c41381b417f8ed47ff55d34e61b09f9cdf does not exist: not found
