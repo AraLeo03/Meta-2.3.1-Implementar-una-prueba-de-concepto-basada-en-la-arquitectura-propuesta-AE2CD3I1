@@ -1,0 +1,52 @@
+
+services:
+  db:
+    image: mariadb:10.11
+    container_name: peer-review-db
+    environment:
+      MYSQL_ROOT_PASSWORD: LeoCra
+      MYSQL_DATABASE: peer_review
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./backend/database.sql:/docker-entrypoint-initdb.d/database.sql
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  backend:
+    build: ./backend
+    container_name: peer-review-backend
+    environment:
+      DB_HOST: db
+      DB_USER: root
+      DB_PASSWORD: LeoCra
+      DB_NAME: peer_review
+      JWT_SECRET: peer-review-secret-key
+      PORT: 3000
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: peer-review-frontend
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+    environment:
+      VITE_API_URL: http://backend:3000
+    stdin_open: true
+    tty: true
+
+volumes:
+  db_data:

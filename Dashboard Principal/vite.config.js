@@ -9,5 +9,14 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
       '@shared': fileURLToPath(new URL('./src/shared', import.meta.url))
     }
-  }
+  },
+  server: {
+    proxy: {
+      '/api': {
+        target: process.env.VITE_API_URL || 'http://localhost:3000',
+        changeOrigin: true
+      }
+    }
+  },
+  envPrefix: ['VITE_', 'PUBLIC_']
 })
