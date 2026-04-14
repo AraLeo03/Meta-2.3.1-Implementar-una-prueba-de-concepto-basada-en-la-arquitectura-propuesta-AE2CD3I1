@@ -125,6 +125,17 @@
                   required
                 />
               </div>
+
+              <div v-if="registerForm.rol === 'revisor'" class="field">
+                <label for="reg-tags">Áreas de Expertise</label>
+                <input 
+                  id="reg-tags"
+                  v-model="registerForm.tagsInput" 
+                  type="text" 
+                  placeholder="Ej: Machine Learning, NLP, Redes Neuronales"
+                />
+                <small class="field-hint">Separados por coma</small>
+              </div>
               
               <div class="field">
                 <label for="reg-password">Contraseña</label>
@@ -189,7 +200,8 @@ const registerForm = reactive({
   rol: '',
   organizacion: '',
   password: '',
-  confirmPassword: ''
+  confirmPassword: '',
+  tagsInput: ''
 })
 
 const registerErrors = reactive({
@@ -232,6 +244,10 @@ function validateRegister() {
 async function handleRegister() {
   if (!validateRegister()) return
   
+  const tags = registerForm.rol === 'revisor' && registerForm.tagsInput
+    ? registerForm.tagsInput.split(',').map(t => t.trim()).filter(t => t)
+    : []
+  
   const userData = {
     email: registerForm.email,
     nombres: registerForm.nombres,
@@ -239,7 +255,8 @@ async function handleRegister() {
     apellidoMaterno: registerForm.apellidoMaterno,
     rol: registerForm.rol,
     organizacion: registerForm.organizacion,
-    password: registerForm.password
+    password: registerForm.password,
+    tags
   }
   
   const result = await authStore.register(userData)

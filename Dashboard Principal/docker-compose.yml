@@ -1,5 +1,22 @@
 
 services:
+  mongo:
+    image: mongo:7
+    container_name: peer-review-mongo
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: LeoCra
+      MONGO_INITDB_DATABASE: peer_review
+    volumes:
+      - mongo_data:/data/db
+    ports:
+      - "27017:27017"
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   db:
     image: mariadb:10.11
     container_name: peer-review-db
@@ -28,11 +45,19 @@ services:
       DB_NAME: peer_review
       JWT_SECRET: peer-review-secret-key
       PORT: 3000
+      MONGO_HOST: mongo
+      MONGO_USER: root
+      MONGO_PASSWORD: LeoCra
+      MONGO_DB: peer_review
     depends_on:
       db:
         condition: service_healthy
+      mongo:
+        condition: service_healthy
     ports:
       - "3000:3000"
+    volumes:
+      - uploads:/app/uploads
 
   frontend:
     build:
@@ -50,3 +75,5 @@ services:
 
 volumes:
   db_data:
+  mongo_data:
+  uploads:

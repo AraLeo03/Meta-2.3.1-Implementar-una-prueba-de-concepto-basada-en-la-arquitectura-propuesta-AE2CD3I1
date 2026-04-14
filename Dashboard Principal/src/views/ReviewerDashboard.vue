@@ -2,10 +2,6 @@
   <div class="rev-wrap">
     <div class="rev-topbar">
       <div class="brand">Dashboard del revisor</div>
-      <div v-if="offlineCount > 0" class="offline-pill">
-        <span class="offline-dot"></span>
-        {{ offlineCount }} artículo{{ offlineCount !== 1 ? 's' : '' }} offline
-      </div>
     </div>
 
     <div class="rev-section">
@@ -83,40 +79,95 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
+import axios from 'axios'
 import { useAppStore } from '@/shared/stores/appStore'
+import { useAuthStore } from '@/shared/stores/authStore'
 import InvitationCard from '@/shared/components/InvitationCard.vue'
 import DeadlineBar from '@/shared/components/DeadlineBar.vue'
 
 const store = useAppStore()
+const authStore = useAuthStore()
+const API_URL = '/api'
 
-const invitations = ref([
-  { id: 1, title: 'Federated Learning con Privacidad Diferencial en Dispositivos Móviles', area: 'Machine Learning · Privacidad', deadline: '10 abr 2025', respondBy: '24 mar 2025', offlineAvailable: true },
-  { id: 2, title: 'Detección Automática de Desinformación en Redes Sociales Mediante LLMs', area: 'NLP · Ética IA', deadline: '5 abr 2025', respondBy: '25 mar 2025', offlineAvailable: false },
-])
+const loading = ref(true)
+const invitations = ref([])
+const activeReviews = ref([])
+const completedReviews = ref([])
 
-const activeReviews = ref([
-  { id: 10, title: 'Optimización de Transformers para Inferencia en Dispositivos Edge', area: 'Deep Learning · Edge Computing', daysLeft: 1, progress: 65, offlineAvailable: true },
-  { id: 11, title: 'Análisis de Sesgos en LLMs para Contextos Biomédicos en Español', area: 'NLP · Biomedicina', daysLeft: 2, progress: 30, offlineAvailable: true },
-  { id: 12, title: 'Sistemas Multi-Agente para Coordinación de Drones en Búsqueda y Rescate', area: 'Robótica · Sistemas Multi-Agente', daysLeft: 14, progress: 0, offlineAvailable: false },
-])
+onMounted(async () => {
+  await fetchInvitations()
+  await fetchMyReviews()
+})
 
-const completedReviews = ref([
-  { id: 20, title: 'Graph Neural Networks para Predicción de Interacciones Proteína-Fármaco', area: 'Bioinformática', completedAt: '14 mar 2025', verdict: 'Revisiones menores' },
-  { id: 21, title: 'Ataques de Envenenamiento en Aprendizaje por Refuerzo con RLHF', area: 'Seguridad IA', completedAt: '2 mar 2025', verdict: 'Aceptar' },
-])
-
-function acceptInvitation(id) {
-  const inv = invitations.value.find(i => i.id === id)
-  if (!inv) return
-  activeReviews.value.unshift({ id: Date.now(), title: inv.title, area: inv.area, daysLeft: 21, progress: 0, offlineAvailable: false })
-  invitations.value = invitations.value.filter(i => i.id !== id)
-  store.pushToast('Invitación aceptada')
+async function fetchInvitations() {
+  if (!authStore.user?.id) return
+  try {
+    const res = await axios.get(`${API_URL}/users/me/invitations?userId=${authStore.user.id}`)
+    invitations.value = res.data
+  } catch (err) {
+    console.error('Error fetching invitations:', err)
+  }
 }
 
-function declineInvitation(id) {
-  invitations.value = invitations.value.filter(i => i.id !== id)
-  store.pushToast('Invitación declinada')
+async function fetchMyReviews() {
+  if (!authStore.user?.id) return
+  try {
+    const res = await axios.get(`${API_URL}/manuscripts/reviewer/${authStore.user.id}`)
+    const reviews = res.data
+    activeReviews.value = reviews.filter(r => r.status === 'pendiente' || r.status === 'aceptada').map(r => ({
+      id: r.manuscriptId,
+      title: r.title,
+      area: r.tags?.join(', ') || '',
+      daysLeft: Math.ceil((new Date(r.deadline) - new Date()) / (1000 * 60 * 60 * 24)),
+      progress: 0,
+      offlineAvailable: false
+    }))
+    completedReviews.value = reviews.filter(r => r.status === 'completada').map(r => ({
+      id: r.manuscriptId,
+      title: r.title,
+      area: r.tags?.join(', ') || '',
+      completedAt: r.completedAt,
+      verdict: r.verdict
+    }))
+  } catch (err) {
+    console.error('Error fetching my reviews:', err)
+  }
+}
+
+async function acceptInvitation(id) {
+  if (!authStore.user?.id) return
+  try {
+    await axios.post(`${API_URL}/users/me/invitations/${id}/accept`, { userId: authStore.user.id })
+    const inv = invitations.value.find(i => i.id === id)
+    if (inv) {
+      activeReviews.value.unshift({
+        id: inv.manuscriptId,
+        title: inv.title,
+        area: '',
+        daysLeft: 21,
+        progress: 0,
+        offlineAvailable: false
+      })
+    }
+    invitations.value = invitations.value.filter(i => i.id !== id)
+    store.pushToast('Invitación aceptada')
+  } catch (err) {
+    console.error('Error accepting invitation:', err)
+    store.pushToast('Error al aceptar invitación')
+  }
+}
+
+async function declineInvitation(id) {
+  if (!authStore.user?.id) return
+  try {
+    await axios.post(`${API_URL}/users/me/invitations/${id}/decline`, { userId: authStore.user.id })
+    invitations.value = invitations.value.filter(i => i.id !== id)
+    store.pushToast('Invitación declinada')
+  } catch (err) {
+    console.error('Error declining invitation:', err)
+    store.pushToast('Error al declinar invitación')
+  }
 }
 
 function verdictClass(verdict) {
@@ -149,6 +200,7 @@ const offlineCount = computed(() =>
 .count-badge.green { background: var(--green-soft); color: var(--green); }
 .rev-empty { display: flex; align-items: center; gap: 10px; border: 1px dashed var(--border); border-radius: var(--radius); background: var(--white); padding: 20px 16px; color: var(--muted); }
 .rev-empty-text { font-size: 13px; }
+
 .table-box { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--white); }
 .table-head { display: grid; grid-template-columns: 1fr 130px 90px; padding: 8px 16px; background: var(--light); border-bottom: 1px solid var(--border); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); gap: 12px; }
 .table-row { display: grid; grid-template-columns: 1fr 130px 90px; align-items: center; gap: 12px; padding: 13px 16px; border-bottom: 1px solid var(--border); }
