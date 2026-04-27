@@ -373,6 +373,7 @@ router.get('/reviewer/:id', async (req, res) => {
         manuscriptId: m._id,
         title: m.title,
         tags: m.tags,
+        pdfName: m.pdfName,
         status: reviewerAssignment?.status || 'pendiente',
         assignedAt: reviewerAssignment?.assignedAt,
         deadline: reviewerAssignment?.completedAt ? null : deadline,
@@ -437,5 +438,75 @@ router.put('/:id/deadline', async (req, res) => {
     res.status(500).json({ error: 'Error al actualizar plazo' })
   }
 })
+
+router.get('/download/:filename', (req, res) => {
+  const fileName = req.params.filename;
+  const filePath = path.join(process.cwd(), 'uploads', fileName);
+  
+  if (fs.existsSync(filePath)) {
+    res.sendFile(filePath);
+  } else {
+    console.error("Archivo no encontrado en:", filePath);
+    res.status(404).json({ error: 'El archivo PDF no existe en el servidor' });
+  }
+});
+
+router.post('/:id/submit-review', async (req, res) => {
+  try {
+    const { verdict, comments, reviewerId } = req.body;
+    const manuscript = await Manuscript.findById(req.params.id);
+
+    if (!manuscript) return res.status(404).json({ error: 'Manuscrito no encontrado' });
+
+    const assignment = manuscript.reviewers.find(r => r.reviewerId.toString() === reviewerId);
+    
+    if (!assignment) {
+      return res.status(403).json({ error: 'No tienes permiso para revisar este manuscrito' });
+    }
+
+    assignment.status = 'completada';
+    assignment.verdict = verdict; // 'aceptado', 'rechazado', etc.
+    assignment.completedAt = new Date();
+    
+    // Nota: Si quieres guardar los comentarios, asegúrate que tu modelo Manuscript 
+    // tenga un campo 'comments' en reviewerAssignmentSchema. 
+    // Si no lo tiene, solo se guardará el veredicto por ahora.
+
+    // Si todos los revisores terminaron, el manuscrito pasa a estado 'decision'
+    const allFinished = manuscript.reviewers.every(r => r.status === 'completada');
+    if (allFinished) {
+      manuscript.status = 'decision';
+    }
+
+    await manuscript.save();
+    res.json({ message: 'Revisión enviada con éxito' });
+  } catch (err) {
+    console.error("Error en submit-review:", err);
+    res.status(500).json({ error: 'Error al procesar la revisión' });
+  }
+});
+
+router.post('/:id/accept-invitation', async (req, res) => {
+  try {
+    const reviewerId = extractUserId(req); // Usa la función que ya tienes arriba en el archivo
+    const manuscript = await Manuscript.findById(req.params.id);
+    const assignment = manuscript.reviewers.find(r => r.reviewerId.toString() === reviewerId);
+    if (assignment) {
+      assignment.status = 'aceptada';
+      await manuscript.save();
+      res.json({ message: 'Aceptada' });
+    }
+  } catch (err) { res.status(500).send(); }
+});
+
+router.post('/:id/decline-invitation', async (req, res) => {
+  try {
+    const reviewerId = extractUserId(req);
+    const manuscript = await Manuscript.findById(req.params.id);
+    manuscript.reviewers = manuscript.reviewers.filter(r => r.reviewerId.toString() !== reviewerId);
+    await manuscript.save();
+    res.json({ message: 'Declinada' });
+  } catch (err) { res.status(500).send(); }
+});
 
 export default router
