@@ -19,6 +19,7 @@
           :invitation="inv"
           @accept="acceptInvitation"
           @decline="declineInvitation"
+          @view="viewPDF(inv.id)" 
         />
       </div>
     </div>
