@@ -5,7 +5,7 @@
       <span class="chip">Asignado: {{ formatDate(invitation.assignedAt) }}</span>
     </div>
     <div class="inv-footer">
-      <a :href="'/api/manuscripts/' + invitation.manuscriptId + '/view'" target="_blank" class="btn-view">📖 Ver manuscrito</a>
+      <button class="tu-clase-css-actual" @click="$emit('view')">Ver manuscrito</button>
       <div class="inv-actions">
         <button class="btn-accept" @click="$emit('accept', invitation.id)">✓ Aceptar</button>
         <button class="btn-decline" @click="$emit('decline', invitation.id)">✕ Declinar</button>
@@ -18,7 +18,7 @@
 defineProps({
   invitation: { type: Object, required: true }
 })
-defineEmits(['accept', 'decline'])
+defineEmits(['accept', 'decline', 'view'])
 
 function formatDate(dateStr) {
   if (!dateStr) return ''

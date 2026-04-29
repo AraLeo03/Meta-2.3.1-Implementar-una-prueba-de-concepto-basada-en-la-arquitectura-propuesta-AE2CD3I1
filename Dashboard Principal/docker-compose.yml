@@ -1,7 +1,8 @@
 
 services:
   mongo:
-    image: mongo:7
+    image: mongo:4.4 #Parece que mi computadora no pudo con la V7
+    #image: mongo:7
     container_name: peer-review-mongo
     environment:
       MONGO_INITDB_ROOT_USERNAME: root
@@ -12,7 +13,8 @@ services:
     ports:
       - "27017:27017"
     healthcheck:
-      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      test: echo 'db.runCommand("ping").ok' | mongo localhost:27017/test --quiet #Cambios por la V.
+      #test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
       interval: 10s
       timeout: 5s
       retries: 5
