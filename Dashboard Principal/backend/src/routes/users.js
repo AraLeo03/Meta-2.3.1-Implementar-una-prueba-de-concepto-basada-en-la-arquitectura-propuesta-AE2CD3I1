@@ -3,14 +3,20 @@ import User from '../models/User.js'
 
 const router = express.Router()
 
+// ── GET / ─────────────────────────────────────────────────────────────────────
+// Acepta ?rol=revisor para filtrar usuarios que tengan ese rol entre sus roles
+
 router.get('/', async (req, res) => {
   try {
     const { rol } = req.query
-    
-    const filter = {}
-    if (rol) filter.rol = rol
 
-    const users = await User.find(filter).select('nombres apellido_paterno apellido_materno email rol organizacion tags')
+    const filter = {}
+    // Con multi-rol usamos $in: un usuario califica si el rol buscado
+    // está incluido en su array de roles
+    if (rol) filter.roles = { $in: [rol] }
+
+    const users = await User.find(filter)
+      .select('nombres apellido_paterno apellido_materno email roles organizacion tags')
 
     res.json(users.map(u => ({
       id: u._id,
@@ -19,7 +25,8 @@ router.get('/', async (req, res) => {
       apellido_materno: u.apellido_materno,
       nombre: `${u.nombres} ${u.apellido_paterno} ${u.apellido_materno}`,
       email: u.email,
-      rol: u.rol,
+      roles: u.roles,           // ← array completo
+      rol: u.primaryRole,       // ← alias legado (virtual del modelo)
       organizacion: u.organizacion,
       tags: u.tags
     })))
@@ -29,22 +36,26 @@ router.get('/', async (req, res) => {
   }
 })
 
+// ── GET /reviewers ────────────────────────────────────────────────────────────
+
 router.get('/reviewers', async (req, res) => {
   try {
     const { tags, search } = req.query
-    
-    const filter = { rol: 'revisor' }
+
+    // Filtra usuarios que tengan 'revisor' entre sus roles
+    const filter = { roles: { $in: ['revisor'] } }
     if (tags) {
       filter.tags = { $in: tags.split(',').map(t => t.trim()) }
     }
 
-    let reviewers = await User.find(filter).select('nombres apellido_paterno apellido_materno email organizacion tags')
+    let reviewers = await User.find(filter)
+      .select('nombres apellido_paterno apellido_materno email organizacion tags')
 
     if (search) {
       const searchLower = search.toLowerCase()
       reviewers = reviewers.filter(r => {
         const fullName = `${r.nombres} ${r.apellido_paterno} ${r.apellido_materno}`.toLowerCase()
-        return fullName.includes(searchLower) || 
+        return fullName.includes(searchLower) ||
                r.tags.some(t => t.toLowerCase().includes(searchLower))
       })
     }
@@ -61,6 +72,8 @@ router.get('/reviewers', async (req, res) => {
     res.status(500).json({ error: 'Error al obtener revisores' })
   }
 })
+
+// ── GET /me/invitations ───────────────────────────────────────────────────────
 
 router.get('/me/invitations', async (req, res) => {
   try {
@@ -81,6 +94,8 @@ router.get('/me/invitations', async (req, res) => {
     res.status(500).json({ error: 'Error al obtener invitaciones' })
   }
 })
+
+// ── POST /me/invitations/:id/accept ──────────────────────────────────────────
 
 router.post('/me/invitations/:id/accept', async (req, res) => {
   try {
@@ -105,6 +120,8 @@ router.post('/me/invitations/:id/accept', async (req, res) => {
   }
 })
 
+// ── POST /me/invitations/:id/decline ─────────────────────────────────────────
+
 router.post('/me/invitations/:id/decline', async (req, res) => {
   try {
     const { userId } = req.body
@@ -128,10 +145,22 @@ router.post('/me/invitations/:id/decline', async (req, res) => {
   }
 })
 
+// ── PUT /:id ──────────────────────────────────────────────────────────────────
+
 router.put('/:id', async (req, res) => {
   try {
-    const { nombres, apellido_paterno, apellido_materno, email, organizacion, rol, tags, password } = req.body
-    
+    const { nombres, apellido_paterno, apellido_materno, email, organizacion, tags, password } = req.body
+
+    // Acepta `roles` (array nuevo) o `rol` (string legado → se convierte)
+    let roles = null
+    if (Array.isArray(req.body.roles) && req.body.roles.length > 0) {
+      roles = req.body.roles
+    } else if (typeof req.body.roles === 'string') {
+      roles = [req.body.roles]
+    } else if (typeof req.body.rol === 'string') {
+      roles = [req.body.rol]
+    }
+
     const user = await User.findById(req.params.id)
     if (!user) {
       return res.status(404).json({ error: 'Usuario no encontrado' })
@@ -142,7 +171,7 @@ router.put('/:id', async (req, res) => {
     if (apellido_materno) user.apellido_materno = apellido_materno
     if (email) user.email = email
     if (organizacion) user.organizacion = organizacion
-    if (rol) user.rol = rol
+    if (roles) user.roles = roles
     if (tags) user.tags = tags
     if (password) user.password = password
 
@@ -152,7 +181,8 @@ router.put('/:id', async (req, res) => {
       id: user._id,
       nombre: `${user.nombres} ${user.apellido_paterno} ${user.apellido_materno}`,
       email: user.email,
-      rol: user.rol
+      roles: user.roles,
+      rol: user.primaryRole
     })
   } catch (err) {
     console.error('Error updating user:', err)

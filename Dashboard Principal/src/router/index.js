@@ -8,6 +8,19 @@ import AdminDashboard from '@/views/AdminDashboard.vue'
 import LoginView from '@/views/LoginView.vue'
 import { useAuthStore } from '@/shared/stores/authStore'
 
+// ── Mapa ruta → rol requerido ─────────────────────────────────────────────────
+// Con multi-rol, una ruta requiere que el usuario tenga ESE rol entre sus roles
+// (no necesariamente que sea su único rol).
+const ROUTE_ROLE = {
+  '/autor': 'autor',
+  '/revisor': 'revisor',
+  '/editor-seccion': 'editor_seccion',
+  '/editor-jefe': 'editor_jefe',
+  '/admin': 'admin'
+}
+
+const DASHBOARD_PATHS = Object.keys(ROUTE_ROLE)
+
 const routes = [
   { path: '/', name: 'home', component: HomeView },
   { path: '/login', name: 'login', component: LoginView },
@@ -23,63 +36,58 @@ const router = createRouter({
   routes
 })
 
+// ── Guard 1: hidrata el usuario si ya hay token pero aún no está en memoria ──
 router.beforeResolve(async (to) => {
   const authStore = useAuthStore()
-  
   if (authStore.token && !authStore.user) {
     await authStore.checkAuth()
   }
 })
 
-const roleRoutes = {
-  autor: '/autor',
-  revisor: '/revisor',
-  editor_seccion: '/editor-seccion',
-  editor_jefe: '/editor-jefe',
-  admin: '/admin'
-}
-
+// ── Guard 2: control de acceso ────────────────────────────────────────────────
 router.beforeEach(async (to, from, next) => {
   const authStore = useAuthStore()
-  
-  const dashboardRoutes = ['/autor', '/revisor', '/editor-seccion', '/editor-jefe', '/admin']
-  const isDashboardRoute = dashboardRoutes.includes(to.path)
 
+  // — Si hay token pero el usuario no está hidratado, intenta recuperarlo
+  if (!authStore.isAuthenticated && authStore.token) {
+    const ok = await authStore.checkAuth()
+    if (!ok) {
+      next('/login')
+      return
+    }
+  }
+
+  // — Ruta de login: si ya está autenticado, redirige a su dashboard principal
   if (to.path === '/login') {
     if (authStore.isAuthenticated) {
-      const rolePath = roleRoutes[authStore.user?.rol]
-      next(rolePath || '/login')
+      next(authStore.getRoleRoute())
     } else {
       next()
     }
     return
   }
 
-  if (!authStore.isAuthenticated && authStore.token) {
-    const authenticated = await authStore.checkAuth()
-    if (!authenticated) {
-      next('/login')
-      return
-    }
-  }
-
+  // — Rutas protegidas: requieren autenticación
   if (!authStore.isAuthenticated) {
     next('/login')
     return
   }
 
-  if (isDashboardRoute) {
-    const userRolePath = roleRoutes[authStore.user?.rol]
-    if (to.path !== userRolePath) {
-      next(userRolePath)
-      return
-    }
+  // — Raíz: redirige al dashboard principal del usuario
+  if (to.path === '/') {
+    next(authStore.getRoleRoute())
+    return
   }
 
-  if (to.path === '/') {
-    const rolePath = roleRoutes[authStore.user?.rol]
-    next(rolePath || '/login')
-    return
+  // — Dashboards: verifica que el usuario tenga el rol necesario para esa ruta
+  //   Con multi-rol un autor-revisor puede entrar a /autor Y a /revisor.
+  if (DASHBOARD_PATHS.includes(to.path)) {
+    const requiredRole = ROUTE_ROLE[to.path]
+    if (!authStore.hasRole(requiredRole)) {
+      // No tiene el rol: lo manda a su dashboard principal
+      next(authStore.getRoleRoute())
+      return
+    }
   }
 
   next()

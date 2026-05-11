@@ -102,18 +102,28 @@
                   required
                 />
               </div>
-              
+
+              <!-- ── MULTI-ROL: checkboxes en lugar de <select> ── -->
               <div class="field">
-                <label for="reg-rol">Rol</label>
-                <select id="reg-rol" v-model="registerForm.rol" required>
-                  <option value="" disabled>Selecciona un rol</option>
-                  <option value="autor">Autor</option>
-                  <option value="revisor">Revisor</option>
-                  <option value="editor_seccion">Editor de Sección</option>
-                  <option value="editor_jefe">Editor Jefe</option>
-                  <option value="admin">Administrador</option>
-                </select>
+                <label>Rol <span class="label-hint">(puedes seleccionar varios)</span></label>
+                <div class="roles-grid">
+                  <label
+                    v-for="option in roleOptions"
+                    :key="option.value"
+                    class="role-checkbox"
+                    :class="{ selected: registerForm.roles.includes(option.value) }"
+                  >
+                    <input
+                      type="checkbox"
+                      :value="option.value"
+                      v-model="registerForm.roles"
+                    />
+                    <span class="role-label">{{ option.label }}</span>
+                  </label>
+                </div>
+                <span v-if="registerErrors.roles" class="field-error">{{ registerErrors.roles }}</span>
               </div>
+              <!-- ──────────────────────────────────────────────── -->
               
               <div class="field">
                 <label for="reg-organizacion">Organización</label>
@@ -126,7 +136,8 @@
                 />
               </div>
 
-              <div v-if="registerForm.rol === 'revisor'" class="field">
+              <!-- Tags: se muestra si el usuario tiene el rol revisor -->
+              <div v-if="registerForm.roles.includes('revisor')" class="field">
                 <label for="reg-tags">Áreas de Expertise</label>
                 <input 
                   id="reg-tags"
@@ -187,6 +198,15 @@ const showRegisterModal = ref(false)
 const registerMessage = ref('')
 const registerSuccess = ref(false)
 
+// Opciones de rol disponibles
+const roleOptions = [
+  { value: 'autor',          label: 'Autor' },
+  { value: 'revisor',        label: 'Revisor' },
+  { value: 'editor_seccion', label: 'Editor de Sección' },
+  { value: 'editor_jefe',    label: 'Editor Jefe' },
+  { value: 'admin',          label: 'Administrador' }
+]
+
 const loginForm = reactive({
   email: '',
   password: ''
@@ -197,7 +217,7 @@ const registerForm = reactive({
   nombres: '',
   apellidoPaterno: '',
   apellidoMaterno: '',
-  rol: '',
+  roles: [],        // ← ahora es array (multi-rol)
   organizacion: '',
   password: '',
   confirmPassword: '',
@@ -206,7 +226,8 @@ const registerForm = reactive({
 
 const registerErrors = reactive({
   email: '',
-  password: ''
+  password: '',
+  roles: ''         // ← validación de roles
 })
 
 async function handleLogin() {
@@ -219,12 +240,19 @@ async function handleLogin() {
 function validateRegister() {
   registerErrors.email = ''
   registerErrors.password = ''
+  registerErrors.roles = ''
   registerMessage.value = ''
   registerSuccess.value = false
   
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
   if (!emailRegex.test(registerForm.email)) {
     registerErrors.email = 'Ingresa un correo electrónico válido'
+    return false
+  }
+
+  // Validar que se seleccionó al menos un rol
+  if (registerForm.roles.length === 0) {
+    registerErrors.roles = 'Selecciona al menos un rol'
     return false
   }
   
@@ -244,7 +272,8 @@ function validateRegister() {
 async function handleRegister() {
   if (!validateRegister()) return
   
-  const tags = registerForm.rol === 'revisor' && registerForm.tagsInput
+  // Tags solo si tiene el rol revisor
+  const tags = registerForm.roles.includes('revisor') && registerForm.tagsInput
     ? registerForm.tagsInput.split(',').map(t => t.trim()).filter(t => t)
     : []
   
@@ -253,7 +282,7 @@ async function handleRegister() {
     nombres: registerForm.nombres,
     apellidoPaterno: registerForm.apellidoPaterno,
     apellidoMaterno: registerForm.apellidoMaterno,
-    rol: registerForm.rol,
+    roles: registerForm.roles,   // ← array de roles
     organizacion: registerForm.organizacion,
     password: registerForm.password,
     tags
@@ -270,7 +299,7 @@ async function handleRegister() {
       loginForm.password = ''
       registerMessage.value = ''
       Object.keys(registerForm).forEach(key => {
-        registerForm[key] = key === 'rol' ? '' : ''
+        registerForm[key] = key === 'roles' ? [] : ''
       })
     }, 2000)
   } else {
@@ -341,6 +370,13 @@ async function handleRegister() {
   color: var(--text);
 }
 
+.label-hint {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+  margin-left: 4px;
+}
+
 .field input,
 .field select {
   width: 100%;
@@ -365,6 +401,58 @@ async function handleRegister() {
   font-size: 12px;
   color: var(--red);
 }
+
+.field-hint {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* ── Roles grid ── */
+.roles-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.role-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  user-select: none;
+}
+
+.role-checkbox:hover {
+  border-color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 5%, transparent);
+}
+
+.role-checkbox.selected {
+  border-color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 10%, transparent);
+}
+
+.role-checkbox input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--blue);
+  flex-shrink: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.role-label {
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.2;
+}
+/* ─────────────── */
 
 .error-message {
   background: var(--red-soft);
