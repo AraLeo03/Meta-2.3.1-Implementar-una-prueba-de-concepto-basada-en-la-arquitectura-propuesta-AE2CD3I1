@@ -1,7 +1,7 @@
 <template>
   <div class="wrap">
     <div class="brand">Dashboard del autor</div>
-    <button class="btn-new" @click="showNewModal = true">+ Enviar nuevo manuscrito</button>
+    <button class="btn-new" @click="openNewModal">+ Enviar nuevo manuscrito</button>
     <div class="section-label">Mis manuscritos</div>
     <div v-if="loading" class="empty">
       <div class="empty-title">Cargando manuscritos...</div>
@@ -66,6 +66,8 @@
                   <button v-if="form.authors.length > 1" type="button" class="btn-remove-author" @click="removeAuthor(index)">✕</button>
                 </div>
                 <button type="button" class="btn-add-author" @click="addAuthor">+ Agregar autor</button>
+                <!-- Advertencia si el autor logueado no está en la lista -->
+                <div v-if="authorError" class="author-error">⚠ {{ authorError }}</div>
               </div>
 
               <div class="form-group">
@@ -143,6 +145,12 @@
                 <div class="detail-text">{{ selectedManuscript?.date }}</div>
               </div>
             </div>
+            <div class="detail-section" v-if="selectedManuscript?.id">
+              <label>Comentarios con revisores</label>
+              <div class="comment-panel-wrap">
+                <CommentPanel :manuscriptId="selectedManuscript.id" />
+              </div>
+            </div>
             <div class="modal-actions">
               <a :href="'/api/manuscripts/' + selectedManuscript?.id + '/view'" target="_blank" class="btn-read">📖 Leer</a>
               <a :href="'/api/manuscripts/' + selectedManuscript?.id + '/download'" target="_blank" class="btn-download">⬇ Descargar</a>
@@ -177,6 +185,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import axios from 'axios'
 import { useAppStore } from '@/shared/stores/appStore'
 import { useAuthStore } from '@/shared/stores/authStore'
+import CommentPanel from '@/shared/components/CommentPanel.vue'
 
 const store = useAppStore()
 const authStore = useAuthStore()
@@ -191,12 +200,33 @@ const selectedManuscript = ref(null)
 const submitting = ref(false)
 const tagsInput = ref('')
 
+// Datos del usuario logueado para prellenar y validar
+const currentUserFullName = computed(() => {
+  const u = authStore.user
+  if (!u) return ''
+  return `${u.nombres || ''} ${u.apellidoPaterno || u.apellido_paterno || ''} ${u.apellidoMaterno || u.apellido_materno || ''}`.trim()
+})
+const currentUserEmail = computed(() => authStore.user?.email || '')
+
 const form = reactive({ 
   title: '', 
   description: '',
   pdf: null,
   authors: [{ name: '', email: '', affiliation: '' }]
 })
+
+// Error de validación de autores
+const authorError = ref('')
+
+// Verifica que el usuario logueado esté listado como autor (por email o nombre)
+function currentUserIsListed() {
+  const email = currentUserEmail.value.toLowerCase()
+  const name  = currentUserFullName.value.toLowerCase()
+  return form.authors.some(a =>
+    a.email.trim().toLowerCase() === email ||
+    a.name.trim().toLowerCase() === name
+  )
+}
 
 const canSubmit = computed(() => {
   return form.title.trim() && 
@@ -208,6 +238,17 @@ const canSubmit = computed(() => {
 onMounted(async () => {
   await fetchManuscripts()
 })
+
+// Prellenar el primer autor con los datos del usuario logueado
+function openNewModal() {
+  form.authors = [{
+    name: currentUserFullName.value,
+    email: currentUserEmail.value,
+    affiliation: authStore.user?.organizacion || ''
+  }]
+  authorError.value = ''
+  showNewModal.value = true
+}
 
 async function fetchManuscripts() {
   loading.value = true
@@ -247,7 +288,14 @@ function handleFileChange(event) {
 
 async function submit() {
   if (!canSubmit.value || submitting.value) return
-  
+
+  // Validar que el autor logueado esté incluido en la lista
+  if (!currentUserIsListed()) {
+    authorError.value = `Debes incluirte como autor. Agrega una entrada con tu nombre (${currentUserFullName.value}) o tu email (${currentUserEmail.value}).`
+    return
+  }
+  authorError.value = ''
+
   submitting.value = true
   try {
     const formData = new FormData()
@@ -307,6 +355,7 @@ function closeModal() {
   form.pdf = null
   form.authors = [{ name: '', email: '', affiliation: '' }]
   tagsInput.value = ''
+  authorError.value = ''
 }
 
 function badgeClass(s) {
@@ -346,7 +395,7 @@ function badgeClass(s) {
 .empty-sub { font-size: 13px; color: var(--muted); }
 
 .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 200; display: flex; align-items: center; justify-content: center; padding: 20px; backdrop-filter: blur(4px); }
-.modal { background: var(--white); border-radius: 16px; width: 100%; max-width: 500px; box-shadow: 0 20px 60px rgba(0,0,0,0.15); overflow: hidden; }
+.modal { background: var(--white); border-radius: 16px; width: 100%; max-width: 600px; box-shadow: 0 20px 60px rgba(0,0,0,0.15); overflow: hidden; }
 .modal-header { padding: 24px 24px 0; text-align: center; }
 .modal-header h2 { font-size: 20px; font-weight: 600; color: var(--text); margin: 0 0 6px; }
 .modal-header p { font-size: 13px; color: var(--muted); margin: 0; }
@@ -363,6 +412,7 @@ function badgeClass(s) {
 .btn-remove-author { background: #fee2e2; color: #dc2626; border: none; border-radius: 6px; padding: 8px 12px; cursor: pointer; font-size: 14px; }
 .btn-add-author { background: none; border: 1.5px dashed var(--border); border-radius: 8px; padding: 8px 16px; width: 100%; font-size: 13px; color: var(--muted); cursor: pointer; }
 .btn-add-author:hover { border-color: var(--blue); color: var(--blue); }
+.author-error { margin-top: 8px; padding: 9px 12px; background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; font-size: 12px; color: #c2410c; line-height: 1.4; }
 
 .file-input-wrap { border: 1.5px solid var(--border); border-radius: 10px; padding: 12px 14px; }
 .file-input-wrap input { border: none; padding: 0; }
@@ -385,6 +435,7 @@ function badgeClass(s) {
 .tag-chip { font-size: 11px; padding: 4px 10px; background: var(--light); border-radius: 100px; color: var(--muted); }
 
 .modal-body { padding: 16px 24px; }
+.comment-panel-wrap { height: 300px; margin-top: 6px; }
 .modal-actions { display: flex; gap: 8px; padding: 16px 24px 24px; }
 .btn-read, .btn-download, .btn-delete-modal { flex: 1; padding: 10px 12px; border-radius: 10px; font-size: 13px; font-weight: 500; text-align: center; text-decoration: none; cursor: pointer; border: none; }
 .btn-read { background: #eff6ff; color: #1d4ed8; }

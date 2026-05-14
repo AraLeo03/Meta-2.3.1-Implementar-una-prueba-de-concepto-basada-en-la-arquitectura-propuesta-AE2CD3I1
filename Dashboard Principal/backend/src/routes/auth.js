@@ -18,11 +18,56 @@ async function queryDB(sql, params = []) {
   }
 }
 
-router.post('/register', async (req, res) => {
-  const { email, nombres, apellidoPaterno, apellidoMaterno, rol, organizacion, password, tags } = req.body
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
-  if (!email || !nombres || !apellidoPaterno || !apellidoMaterno || !rol || !organizacion || !password) {
+/**
+ * Normaliza el campo de roles: acepta tanto `roles` (array nuevo)
+ * como `rol` (string legado) para mantener compatibilidad con clientes
+ * que todavía envíen el campo antiguo.
+ */
+function parseRoles(body) {
+  if (Array.isArray(body.roles) && body.roles.length > 0) return body.roles
+  if (typeof body.roles === 'string') return [body.roles]
+  if (typeof body.rol === 'string') return [body.rol]  // compatibilidad legada
+  return null
+}
+
+/**
+ * Formatea un documento User para la respuesta JSON.
+ * Siempre devuelve `roles` (array). Incluye `rol` como alias
+ * del rol primario para no romper clientes antiguos.
+ */
+function formatUser(user) {
+  const ROLE_PRIORITY = ['admin', 'editor_jefe', 'editor_seccion', 'revisor', 'autor']
+  const primaryRole = ROLE_PRIORITY.find(r => user.roles.includes(r)) || user.roles[0]
+  return {
+    id: user._id,
+    email: user.email,
+    nombres: user.nombres,
+    apellidoPaterno: user.apellido_paterno,
+    apellidoMaterno: user.apellido_materno,
+    roles: user.roles,          // ← nuevo campo (array)
+    rol: primaryRole,           // ← alias legado (rol de mayor prioridad)
+    organizacion: user.organizacion,
+    tags: user.tags
+  }
+}
+
+// ── POST /register ────────────────────────────────────────────────────────────
+
+router.post('/register', async (req, res) => {
+  const { email, nombres, apellidoPaterno, apellidoMaterno, organizacion, password, tags } = req.body
+
+  const roles = parseRoles(req.body)
+
+  if (!email || !nombres || !apellidoPaterno || !apellidoMaterno || !roles || !organizacion || !password) {
     return res.status(400).json({ message: 'Todos los campos son requeridos' })
+  }
+
+  const validRoles = ['autor', 'revisor', 'editor_seccion', 'editor_jefe', 'admin']
+  const invalidRoles = roles.filter(r => !validRoles.includes(r))
+  if (invalidRoles.length > 0) {
+    return res.status(400).json({ message: `Roles inválidos: ${invalidRoles.join(', ')}` })
   }
 
   try {
@@ -38,7 +83,7 @@ router.post('/register', async (req, res) => {
       nombres,
       apellido_paterno: apellidoPaterno,
       apellido_materno: apellidoMaterno,
-      rol,
+      roles,               // ← array de roles
       organizacion,
       tags: tags || [],
       password: hashedPassword
@@ -52,6 +97,8 @@ router.post('/register', async (req, res) => {
     res.status(500).json({ message: 'Error al registrar usuario' })
   }
 })
+
+// ── POST /login ───────────────────────────────────────────────────────────────
 
 router.post('/login', async (req, res) => {
   const { email, password } = req.body
@@ -71,30 +118,29 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ message: 'Contraseña incorrecta' })
     }
 
+    // El JWT incluye `roles` (array) y `rol` (rol primario) para compatibilidad
+    const ROLE_PRIORITY = ['admin', 'editor_jefe', 'editor_seccion', 'revisor', 'autor']
+    const primaryRole = ROLE_PRIORITY.find(r => user.roles.includes(r)) || user.roles[0]
+
     const token = jwt.sign(
-      { id: user._id.toString(), email: user.email, rol: user.rol },
+      {
+        id: user._id.toString(),
+        email: user.email,
+        roles: user.roles,   // ← nuevo
+        rol: primaryRole     // ← alias legado
+      },
       JWT_SECRET,
       { expiresIn: '24h' }
     )
 
-    res.json({
-      token,
-      user: {
-        id: user._id,
-        email: user.email,
-        nombres: user.nombres,
-        apellidoPaterno: user.apellido_paterno,
-        apellidoMaterno: user.apellido_materno,
-        rol: user.rol,
-        organizacion: user.organizacion,
-        tags: user.tags
-      }
-    })
+    res.json({ token, user: formatUser(user) })
   } catch (error) {
     console.error('Error en login:', error)
     res.status(500).json({ message: 'Error al iniciar sesión' })
   }
 })
+
+// ── GET /me ───────────────────────────────────────────────────────────────────
 
 router.get('/me', async (req, res) => {
   const authHeader = req.headers.authorization
@@ -107,23 +153,12 @@ router.get('/me', async (req, res) => {
   try {
     const decoded = jwt.verify(token, JWT_SECRET)
     const user = await User.findById(decoded.id).select('-password')
-    
+
     if (!user) {
       return res.status(401).json({ message: 'Usuario no encontrado' })
     }
 
-    res.json({
-      user: {
-        id: user._id,
-        email: user.email,
-        nombres: user.nombres,
-        apellidoPaterno: user.apellido_paterno,
-        apellidoMaterno: user.apellido_materno,
-        rol: user.rol,
-        organizacion: user.organizacion,
-        tags: user.tags
-      }
-    })
+    res.json({ user: formatUser(user) })
   } catch (error) {
     console.error('Error en /me:', error)
     res.status(401).json({ message: 'Token inválido' })

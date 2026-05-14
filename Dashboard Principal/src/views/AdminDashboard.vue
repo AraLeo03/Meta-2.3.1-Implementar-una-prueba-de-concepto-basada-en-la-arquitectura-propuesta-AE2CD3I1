@@ -56,6 +56,7 @@
       </div>
     </template>
 
+    <!-- ── Confirmar eliminar revisor ── -->
     <Teleport to="body">
       <Transition name="fade">
         <div v-if="showRemoveModal" class="modal-overlay" @click.self="closeRemoveModal">
@@ -73,6 +74,7 @@
       </Transition>
     </Teleport>
 
+    <!-- ── Editar plazo ── -->
     <Teleport to="body">
       <Transition name="fade">
         <div v-if="showDeadlineModal" class="modal-overlay" @click.self="closeDeadlineModal">
@@ -96,6 +98,7 @@
       </Transition>
     </Teleport>
 
+    <!-- ── Detalle de manuscrito ── -->
     <Teleport to="body">
       <Transition name="fade">
         <div v-if="showManuscriptDetailModal" class="modal-overlay" @click.self="closeManuscriptDetailModal">
@@ -113,10 +116,26 @@
                 <label>Fecha de envío</label>
                 <div class="detail-text">{{ selectedManuscript?.date }}</div>
               </div>
+
+              <!-- ── #2755 Verificación de autores registrados ── -->
               <div class="detail-section">
                 <label>Autores</label>
-                <div class="detail-text">{{ selectedManuscript?.authors?.map(a => a.name).join(', ') }}</div>
+                <div v-if="verifyingAuthors" class="authors-loading">Verificando registros...</div>
+                <div v-else class="authors-list">
+                  <div
+                    v-for="a in authorVerification"
+                    :key="a.name"
+                    class="author-row"
+                    :class="a.registered ? 'author-ok' : 'author-missing'"
+                  >
+                    <span class="author-icon">{{ a.registered ? '✓' : '!' }}</span>
+                    <span class="author-name">{{ a.name }}</span>
+                    <span class="author-status-label">{{ a.registered ? 'Registrado' : 'No registrado' }}</span>
+                  </div>
+                </div>
               </div>
+              <!-- ─────────────────────────────────────────────── -->
+
               <div v-if="selectedManuscript?.description" class="detail-section">
                 <label>Descripción</label>
                 <div class="detail-text">{{ selectedManuscript.description }}</div>
@@ -159,6 +178,7 @@
       </Transition>
     </Teleport>
 
+    <!-- ── Opciones de gestión ── -->
     <Teleport to="body">
       <Transition name="fade">
         <div v-if="showOptionsModal" class="modal-overlay" @click.self="showOptionsModal = false">
@@ -188,6 +208,7 @@
       </Transition>
     </Teleport>
 
+    <!-- ── Lista de usuarios ── -->
     <Teleport to="body">
       <Transition name="fade">
         <div v-if="showUsersModal" class="modal-overlay" @click.self="showUsersModal = false">
@@ -202,7 +223,7 @@
                   <tr>
                     <th>Nombre</th>
                     <th>Email</th>
-                    <th>Rol</th>
+                    <th>Roles</th>
                     <th>Organización</th>
                     <th>Acciones</th>
                   </tr>
@@ -211,7 +232,17 @@
                   <tr v-for="u in usuarios" :key="u.id">
                     <td>{{ u.nombre }}</td>
                     <td>{{ u.email }}</td>
-                    <td><span class="role-badge" :class="roleClass(u.rol)">{{ formatRole(u.rol) }}</span></td>
+                    <!-- Muestra un badge por cada rol del usuario -->
+                    <td>
+                      <div class="roles-cell">
+                        <span
+                          v-for="rol in (u.roles || [u.rol])"
+                          :key="rol"
+                          class="role-badge"
+                          :class="roleClass(rol)"
+                        >{{ formatRole(rol) }}</span>
+                      </div>
+                    </td>
                     <td>{{ u.organizacion }}</td>
                     <td><button class="btn-action" @click="openEditUserModal(u)">✏ Editar</button></td>
                   </tr>
@@ -223,6 +254,7 @@
       </Transition>
     </Teleport>
 
+    <!-- ── Editar usuario (#2758 multi-rol) ── -->
     <Teleport to="body">
       <Transition name="fade">
         <div v-if="showEditUserModal" class="modal-overlay" @click.self="closeEditUserModal">
@@ -251,16 +283,37 @@
                 <label>Organización</label>
                 <input v-model="editUserForm.organizacion" type="text" />
               </div>
+
+              <!-- ── #2758 Roles como checkboxes ── -->
               <div class="form-group">
-                <label>Rol</label>
-                <select v-model="editUserForm.rol">
-                  <option value="autor">Autor</option>
-                  <option value="revisor">Revisor</option>
-                  <option value="editor_seccion">Editor de Sección</option>
-                  <option value="editor_jefe">Editor Jefe</option>
-                  <option value="admin">Administrador</option>
-                </select>
+                <label>Roles <span class="label-hint">(selecciona uno o varios)</span></label>
+                <div class="roles-grid">
+                  <label
+                    v-for="option in roleOptions"
+                    :key="option.value"
+                    class="role-checkbox"
+                    :class="{
+                      selected: editUserForm.roles.includes(option.value),
+                      disabled: option.value === 'admin' && adminCheckboxDisabled
+                    }"
+                    :title="option.value === 'admin' && adminCheckboxDisabled ? 'No puedes quitarte el rol de Administrador' : ''"
+                  >
+                    <input
+                      type="checkbox"
+                      :value="option.value"
+                      v-model="editUserForm.roles"
+                      :disabled="option.value === 'admin' && adminCheckboxDisabled"
+                    />
+                    <span>{{ option.label }}</span>
+                  </label>
+                </div>
+                <span v-if="editRolesError" class="field-error">{{ editRolesError }}</span>
+                <span v-if="adminCheckboxDisabled" class="self-edit-hint">
+                  ⚠ No puedes quitarte el rol de Administrador
+                </span>
               </div>
+              <!-- ─────────────────────────────── -->
+
               <div class="form-group">
                 <label>Etiquetas (separadas por coma)</label>
                 <input v-model="editUserForm.tagsInput" type="text" />
@@ -279,6 +332,7 @@
       </Transition>
     </Teleport>
 
+    <!-- ── Lista de manuscritos (modal) ── -->
     <Teleport to="body">
       <Transition name="fade">
         <div v-if="showManuscriptsModal" class="modal-overlay" @click.self="showManuscriptsModal = false">
@@ -330,11 +384,16 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import axios from 'axios'
 import { useAppStore } from '@/shared/stores/appStore'
+import { useAuthStore } from '@/shared/stores/authStore'
 
 const store = useAppStore()
+const authStore = useAuthStore()
+
+// ID del administrador que está usando el panel ahora mismo
+const currentUserId = computed(() => authStore.user?.id || authStore.user?._id || '')
 const API_URL = '/api/manuscripts'
 const USERS_URL = '/api/users'
 
@@ -353,13 +412,58 @@ const selectedManuscript = ref(null)
 const selectedReviewer = ref(null)
 const newDeadline = ref(21)
 const selectedUser = ref(null)
+const editRolesError = ref('')
+
+// ── #2755 Verificación de autores ────────────────────────────────────────────
+const verifyingAuthors = ref(false)
+const authorVerification = ref([])  // [{ name, registered }]
+
+async function verifyAuthors(manuscript) {
+  if (!manuscript?.authors?.length) {
+    authorVerification.value = []
+    return
+  }
+  verifyingAuthors.value = true
+  try {
+    // Obtenemos todos los usuarios registrados (ya los tenemos en memoria)
+    // y comparamos por nombre completo (case-insensitive)
+    const registeredNames = usuarios.value.map(u =>
+      `${u.nombres || ''} ${u.apellido_paterno || ''} ${u.apellido_materno || ''}`.toLowerCase().trim()
+    )
+    const registeredEmails = usuarios.value.map(u => (u.email || '').toLowerCase())
+
+    authorVerification.value = manuscript.authors.map(a => {
+      const name = (a.name || a).toString().trim()
+      const nameLower = name.toLowerCase()
+      // Coincidencia por nombre completo o por email
+      const registered =
+        registeredNames.some(rn => rn.includes(nameLower) || nameLower.includes(rn)) ||
+        registeredEmails.includes(nameLower)
+      return { name, registered }
+    })
+  } finally {
+    verifyingAuthors.value = false
+  }
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── #2758 Opciones de rol ─────────────────────────────────────────────────────
+const roleOptions = [
+  { value: 'autor',          label: 'Autor' },
+  { value: 'revisor',        label: 'Revisor' },
+  { value: 'editor_seccion', label: 'Editor de Sección' },
+  { value: 'editor_jefe',    label: 'Editor Jefe' },
+  { value: 'admin',          label: 'Administrador' }
+]
+// ─────────────────────────────────────────────────────────────────────────────
+
 const editUserForm = ref({
   nombres: '',
   apellido_paterno: '',
   apellido_materno: '',
   email: '',
   organizacion: '',
-  rol: 'autor',
+  roles: [],   // ← array de roles (multi-rol)
   tagsInput: '',
   password: ''
 })
@@ -387,12 +491,15 @@ async function fetchData() {
     ])
     manuscritos.value = msRes.data
     usuarios.value = usersRes.data
-    
+
     stats.value = {
       usuarios: usuarios.value.length,
       articulos: manuscritos.value.length,
       revisiones: manuscritos.value.reduce((sum, m) => sum + (m.reviewers?.length || 0), 0),
-      revisores: usuarios.value.filter(u => u.rol === 'revisor').length
+      // Cuenta usuarios que tengan 'revisor' entre sus roles
+      revisores: usuarios.value.filter(u =>
+        (u.roles || [u.rol]).includes('revisor')
+      ).length
     }
   } catch (err) {
     console.error('Error fetching data:', err)
@@ -477,31 +584,22 @@ function closeDeadlineModal() {
 
 async function updateDeadline() {
   if (!selectedManuscript.value || !newDeadline.value) return
-  console.log('Updating deadline:', selectedManuscript.value.id, newDeadline.value)
   try {
-    const res = await axios.put(`${API_URL}/${selectedManuscript.value.id}/deadline`, { 
-      days: Number(newDeadline.value) 
+    const res = await axios.put(`${API_URL}/${selectedManuscript.value.id}/deadline`, {
+      days: Number(newDeadline.value)
     })
-    console.log('Response:', res.data)
-    
     const newDeadlineDate = res.data.deadline
     if (selectedManuscript.value.reviewers) {
       selectedManuscript.value.reviewers.forEach(r => {
-        if (!r.completedAt) {
-          r.deadline = newDeadlineDate
-        }
+        if (!r.completedAt) r.deadline = newDeadlineDate
       })
     }
-    
     const idx = manuscritos.value.findIndex(m => m.id === selectedManuscript.value.id)
     if (idx !== -1 && manuscritos.value[idx].reviewers) {
       manuscritos.value[idx].reviewers.forEach(r => {
-        if (!r.completedAt) {
-          r.deadline = newDeadlineDate
-        }
+        if (!r.completedAt) r.deadline = newDeadlineDate
       })
     }
-    
     store.pushToast('Plazo actualizado')
     closeDeadlineModal()
   } catch (err) {
@@ -510,15 +608,17 @@ async function updateDeadline() {
   }
 }
 
-function openManuscriptDetailModal(m) {
+async function openManuscriptDetailModal(m) {
   selectedManuscript.value = m
   newDeadline.value = 21
   showManuscriptDetailModal.value = true
+  await verifyAuthors(m)   // ← #2755 verifica autores al abrir el detalle
 }
 
 function closeManuscriptDetailModal() {
   showManuscriptDetailModal.value = false
   selectedManuscript.value = null
+  authorVerification.value = []
 }
 
 function openRemoveModalFromDetail(rev) {
@@ -528,31 +628,22 @@ function openRemoveModalFromDetail(rev) {
 
 async function updateDeadlineFromDetail() {
   if (!selectedManuscript.value || !newDeadline.value) return
-  console.log('Updating deadline:', selectedManuscript.value.id, newDeadline.value)
   try {
-    const res = await axios.put(`${API_URL}/${selectedManuscript.value.id}/deadline`, { 
-      days: Number(newDeadline.value) 
+    const res = await axios.put(`${API_URL}/${selectedManuscript.value.id}/deadline`, {
+      days: Number(newDeadline.value)
     })
-    console.log('Response:', res.data)
-    
     const newDeadlineDate = res.data.deadline
     if (selectedManuscript.value.reviewers) {
       selectedManuscript.value.reviewers.forEach(r => {
-        if (!r.completedAt) {
-          r.deadline = newDeadlineDate
-        }
+        if (!r.completedAt) r.deadline = newDeadlineDate
       })
     }
-    
     const idx = manuscritos.value.findIndex(m => m.id === selectedManuscript.value.id)
     if (idx !== -1 && manuscritos.value[idx].reviewers) {
       manuscritos.value[idx].reviewers.forEach(r => {
-        if (!r.completedAt) {
-          r.deadline = newDeadlineDate
-        }
+        if (!r.completedAt) r.deadline = newDeadlineDate
       })
     }
-    
     store.pushToast('Plazo actualizado')
   } catch (err) {
     console.error('Error updating deadline:', err)
@@ -582,15 +673,39 @@ function formatRole(rol) {
   return map[rol] || rol
 }
 
+// ── Protección: el admin no puede quitarse a sí mismo el rol 'admin' ─────────
+// Devuelve true si el checkbox de 'admin' debe estar deshabilitado para el
+// usuario que se está editando actualmente.
+const adminCheckboxDisabled = computed(() => {
+  if (!selectedUser.value) return false
+  const editedId = selectedUser.value.id || selectedUser.value._id || ''
+  return String(editedId) === String(currentUserId.value)
+})
+
+// Watcher de seguridad: si el admin está editando su propio usuario y de alguna
+// forma 'admin' desaparece del array (p. ej. manipulación del DOM), lo reinserta.
+watch(
+  () => editUserForm.value?.roles,
+  (roles) => {
+    if (adminCheckboxDisabled.value && roles && !roles.includes('admin')) {
+      roles.push('admin')
+    }
+  },
+  { deep: true }
+)
+// ─────────────────────────────────────────────────────────────────────────────
+
 function openEditUserModal(u) {
   selectedUser.value = u
+  editRolesError.value = ''
   editUserForm.value = {
     nombres: u.nombres || '',
     apellido_paterno: u.apellido_paterno || '',
     apellido_materno: u.apellido_materno || '',
     email: u.email || '',
     organizacion: u.organizacion || '',
-    rol: u.rol || 'autor',
+    // Soporta tanto `roles` (array nuevo) como `rol` (string legado)
+    roles: Array.isArray(u.roles) ? [...u.roles] : (u.rol ? [u.rol] : ['autor']),
     tagsInput: u.tags ? u.tags.join(', ') : '',
     password: ''
   }
@@ -600,10 +715,27 @@ function openEditUserModal(u) {
 function closeEditUserModal() {
   showEditUserModal.value = false
   selectedUser.value = null
+  editRolesError.value = ''
 }
 
 async function updateUser() {
   if (!selectedUser.value) return
+
+  // Validar que tenga al menos un rol
+  if (editUserForm.value.roles.length === 0) {
+    editRolesError.value = 'Selecciona al menos un rol'
+    return
+  }
+
+  // Protección: el admin no puede quitarse a sí mismo el rol 'admin'
+  const editedId = String(selectedUser.value.id || selectedUser.value._id || '')
+  if (editedId === String(currentUserId.value) && !editUserForm.value.roles.includes('admin')) {
+    editRolesError.value = 'No puedes quitarte el rol de Administrador a ti mismo'
+    return
+  }
+
+  editRolesError.value = ''
+
   try {
     const data = {
       nombres: editUserForm.value.nombres,
@@ -611,7 +743,7 @@ async function updateUser() {
       apellido_materno: editUserForm.value.apellido_materno,
       email: editUserForm.value.email,
       organizacion: editUserForm.value.organizacion,
-      rol: editUserForm.value.rol,
+      roles: editUserForm.value.roles,   // ← array de roles
       tags: editUserForm.value.tagsInput.split(',').map(t => t.trim()).filter(t => t)
     }
     if (editUserForm.value.password) {
@@ -672,11 +804,53 @@ async function updateUser() {
 .modal-body { padding: 16px 24px; }
 .form-group { margin-bottom: 16px; }
 .form-group label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 8px; }
-.form-group input { width: 100%; border: 1.5px solid var(--border); border-radius: 10px; padding: 12px 14px; font-size: 14px; outline: none; }
+.form-group input { width: 100%; border: 1.5px solid var(--border); border-radius: 10px; padding: 12px 14px; font-size: 14px; outline: none; box-sizing: border-box; }
 .form-group input:focus { border-color: var(--blue); }
 .modal-actions { display: flex; gap: 10px; padding: 16px 24px 24px; }
 .btn-cancel { flex: 1; padding: 12px 20px; border: 1.5px solid var(--border); border-radius: 10px; background: var(--white); font-size: 14px; cursor: pointer; }
 .btn-submit { flex: 1; padding: 12px 20px; border: none; border-radius: 10px; background: var(--blue); font-size: 14px; color: white; cursor: pointer; }
+
+/* ── Lista de roles en tabla ── */
+.roles-cell { display: flex; flex-wrap: wrap; gap: 4px; }
+
+/* ── Checkboxes de roles en el formulario de edición ── */
+.label-hint { font-size: 11px; font-weight: 400; color: var(--muted); }
+.roles-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 4px; }
+.role-checkbox {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px;
+  border: 1.5px solid var(--border); border-radius: 8px;
+  cursor: pointer; font-size: 13px;
+  transition: border-color 0.15s, background 0.15s;
+  user-select: none;
+}
+.role-checkbox:hover { border-color: var(--blue); }
+.role-checkbox.selected {
+  border-color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 8%, transparent);
+  color: var(--blue);
+  font-weight: 500;
+}
+.role-checkbox input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--blue); flex-shrink: 0; margin: 0; }
+.field-error { font-size: 12px; color: var(--red); margin-top: 4px; display: block; }
+
+/* ── #2755 Verificación de autores ── */
+.authors-loading { font-size: 13px; color: var(--muted); padding: 4px 0; }
+.authors-list { display: flex; flex-direction: column; gap: 6px; }
+.author-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px; border-radius: 8px; font-size: 13px;
+}
+.author-ok { background: #f0fdf4; border: 1px solid #bbf7d0; }
+.author-missing { background: #fff7ed; border: 1px solid #fed7aa; }
+.author-icon { font-size: 13px; font-weight: 700; flex-shrink: 0; }
+.author-ok .author-icon { color: #16a34a; }
+.author-missing .author-icon { color: #ea580c; }
+.author-name { flex: 1; font-weight: 500; }
+.author-status-label { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.author-ok .author-status-label { color: #16a34a; }
+.author-missing .author-status-label { color: #ea580c; }
+/* ─────────────────────────── */
 
 .users-modal { max-width: 800px; }
 .users-modal .modal-body { max-height: 500px; overflow-y: auto; }
@@ -711,6 +885,7 @@ async function updateUser() {
 .detail-section label { display: block; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-bottom: 6px; }
 .detail-text { font-size: 14px; color: var(--text); line-height: 1.5; }
 .detail-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.tag-chip { font-size: 11px; padding: 2px 8px; border-radius: 100px; background: var(--light); border: 1px solid var(--border); }
 .reviewers-list { display: flex; flex-direction: column; gap: 8px; }
 .reviewer-item { display: flex; align-items: center; justify-content: space-between; padding: 10px; border: 1px solid var(--border); border-radius: 8px; }
 .reviewer-info { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -727,4 +902,7 @@ async function updateUser() {
 
 .manuscript-row { cursor: pointer; }
 .manuscript-row:hover { background: var(--light); }
+
+.fade-enter-active, .fade-leave-active { transition: opacity .2s ease; }
+.fade-enter-from, .fade-leave-to { opacity: 0; }
 </style>

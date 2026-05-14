@@ -4,6 +4,7 @@ import path from 'path'
 import authRoutes from './routes/auth.js'
 import manuscriptRoutes from './routes/manuscripts.js'
 import userRoutes from './routes/users.js'
+import commentRoutes from './routes/comments.js'
 import pool from './db.js'
 import { connectMongo } from './mongo.js'
 
@@ -20,6 +21,7 @@ app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')))
 app.use('/api/auth', authRoutes)
 app.use('/api/manuscripts', manuscriptRoutes)
 app.use('/api/users', userRoutes)
+app.use('/api/comments', commentRoutes)
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' })
