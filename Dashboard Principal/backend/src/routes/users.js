@@ -1,71 +1,93 @@
 import express from 'express'
 import User from '../models/User.js'
+import { Op } from 'sequelize' // Importamos los operadores de Sequelize para hacer búsquedas
 
 const router = express.Router()
 
 // ── GET / ─────────────────────────────────────────────────────────────────────
 // Acepta ?rol=revisor para filtrar usuarios que tengan ese rol entre sus roles
-
 router.get('/', async (req, res) => {
+  console.log('>>> [USERS] Petición recibida para cargar usuarios...')
   try {
     const { rol } = req.query
 
-    const filter = {}
-    // Con multi-rol usamos $in: un usuario califica si el rol buscado
-    // está incluido en su array de roles
-    if (rol) filter.roles = { $in: [rol] }
+    // AGREGAMOS { raw: true } para evitar que Sequelize congele la respuesta
+    const users = await User.findAll({ raw: true })
+    console.log(`>>> [USERS] Se leyeron ${users.length} usuarios de MariaDB.`)
 
-    const users = await User.find(filter)
-      .select('nombres apellido_paterno apellido_materno email roles organizacion tags')
+    const safeUsers = users.map(u => {
+      // Garantizar que roles sea un array sin importar cómo lo devuelva MariaDB
+      let rolesArray = []
+      try {
+        if (typeof u.roles === 'string') rolesArray = JSON.parse(u.roles)
+        else if (Array.isArray(u.roles)) rolesArray = u.roles
+      } catch (e) {
+        rolesArray = [u.roles]
+      }
 
-    res.json(users.map(u => ({
-      id: u._id,
-      nombres: u.nombres,
-      apellido_paterno: u.apellido_paterno,
-      apellido_materno: u.apellido_materno,
-      nombre: `${u.nombres} ${u.apellido_paterno} ${u.apellido_materno}`,
-      email: u.email,
-      roles: u.roles,           // ← array completo
-      rol: u.primaryRole,       // ← alias legado (virtual del modelo)
-      organizacion: u.organizacion,
-      tags: u.tags
-    })))
+      return {
+        id: u.id ? u.id.toString() : '',
+        nombres: u.nombres || '',
+        apellido_paterno: u.apellido_paterno || '',
+        apellido_materno: u.apellido_materno || '',
+        nombre: `${u.nombres || ''} ${u.apellido_paterno || ''} ${u.apellido_materno || ''}`.trim(),
+        email: u.email || '',
+        roles: rolesArray,           
+        rol: rolesArray[0] || 'autor',
+        organizacion: u.organizacion || '',
+        tags: u.tags || []
+      }
+    })
+
+    if (rol) {
+      const filtrados = safeUsers.filter(u => u.roles.includes(rol))
+      return res.json(filtrados)
+    }
+
+    res.json(safeUsers)
   } catch (err) {
-    console.error('Error fetching users:', err)
+    console.error('!!! [USERS] Error fatal detectado:', err)
     res.status(500).json({ error: 'Error al obtener usuarios' })
   }
 })
 
 // ── GET /reviewers ────────────────────────────────────────────────────────────
-
+// Usado por los dropdowns de asignación manual y los sistemas de keywords/Gemini
 router.get('/reviewers', async (req, res) => {
   try {
     const { tags, search } = req.query
 
-    // Filtra usuarios que tengan 'revisor' entre sus roles
-    const filter = { roles: { $in: ['revisor'] } }
+    // Traemos todos los usuarios de la base de datos
+    const allUsers = await User.findAll()
+
+    // 1. Filtrar primero que solo sean revisores (reemplaza el filtro $in de Mongo)
+    let reviewers = allUsers.filter(u => u.roles && u.roles.includes('revisor'))
+
+    // 2. Filtrar por tags si vienen en la URL (?tags=ia,blockchain)
     if (tags) {
-      filter.tags = { $in: tags.split(',').map(t => t.trim()) }
+      const tagList = tags.split(',').map(t => t.trim().toLowerCase())
+      reviewers = reviewers.filter(u => 
+        u.tags && u.tags.some(t => tagList.includes(t.toLowerCase()))
+      )
     }
 
-    let reviewers = await User.find(filter)
-      .select('nombres apellido_paterno apellido_materno email organizacion tags')
-
+    // 3. Filtrar por texto de búsqueda (?search=juan) (reemplaza los $regex de Mongo)
     if (search) {
-      const searchLower = search.toLowerCase()
-      reviewers = reviewers.filter(r => {
-        const fullName = `${r.nombres} ${r.apellido_paterno} ${r.apellido_materno}`.toLowerCase()
-        return fullName.includes(searchLower) ||
-               r.tags.some(t => t.toLowerCase().includes(searchLower))
-      })
+      const s = search.toLowerCase()
+      reviewers = reviewers.filter(u => 
+        (u.nombres && u.nombres.toLowerCase().includes(s)) ||
+        (u.apellido_paterno && u.apellido_paterno.toLowerCase().includes(s)) ||
+        (u.email && u.email.toLowerCase().includes(s))
+      )
     }
 
-    res.json(reviewers.map(r => ({
-      id: r._id,
-      nombre: `${r.nombres} ${r.apellido_paterno} ${r.apellido_materno}`,
-      email: r.email,
-      organizacion: r.organizacion,
-      tags: r.tags
+    res.json(reviewers.map(u => ({
+      id: u.id.toString(),
+      nombre: `${u.nombres} ${u.apellido_paterno} ${u.apellido_materno}`,
+      email: u.email,
+      organizacion: u.organizacion,
+      tags: u.tags || [],
+      keywords: u.keywords || []
     })))
   } catch (err) {
     console.error('Error fetching reviewers:', err)
@@ -73,85 +95,38 @@ router.get('/reviewers', async (req, res) => {
   }
 })
 
-// ── GET /me/invitations ───────────────────────────────────────────────────────
-
-router.get('/me/invitations', async (req, res) => {
+// ── GET /:id ──────────────────────────────────────────────────────────────────
+router.get('/:id', async (req, res) => {
   try {
-    const { userId } = req.query
-    const user = await User.findById(userId)
+    const user = await User.findByPk(req.params.id)
     if (!user) {
       return res.status(404).json({ error: 'Usuario no encontrado' })
     }
-    const pendingInvitations = user.invitations.filter(i => i.status === 'pendiente')
-    res.json(pendingInvitations.map(inv => ({
-      id: inv._id,
-      manuscriptId: inv.manuscriptId,
-      title: inv.manuscriptTitle,
-      assignedAt: inv.assignedAt
-    })))
+    res.json({
+      id: user.id.toString(),
+      nombres: user.nombres,
+      apellido_paterno: user.apellido_paterno,
+      apellido_materno: user.apellido_materno,
+      email: user.email,
+      roles: user.roles,
+      organizacion: user.organizacion,
+      afiliaciones_previas: user.afiliaciones_previas || [],
+      tags: user.tags || [],
+      keywords: user.keywords || []
+    })
   } catch (err) {
-    console.error('Error fetching invitations:', err)
-    res.status(500).json({ error: 'Error al obtener invitaciones' })
-  }
-})
-
-// ── POST /me/invitations/:id/accept ──────────────────────────────────────────
-
-router.post('/me/invitations/:id/accept', async (req, res) => {
-  try {
-    const { userId } = req.body
-    const user = await User.findById(userId)
-    if (!user) {
-      return res.status(404).json({ error: 'Usuario no encontrado' })
-    }
-    const invitation = user.invitations.id(req.params.id)
-    if (!invitation) {
-      return res.status(404).json({ error: 'Invitación no encontrada' })
-    }
-    if (invitation.status !== 'pendiente') {
-      return res.status(400).json({ error: 'Invitación ya procesada' })
-    }
-    invitation.status = 'aceptada'
-    await user.save()
-    res.json({ message: 'Invitación aceptada', invitationId: invitation._id })
-  } catch (err) {
-    console.error('Error accepting invitation:', err)
-    res.status(500).json({ error: 'Error al aceptar invitación' })
-  }
-})
-
-// ── POST /me/invitations/:id/decline ─────────────────────────────────────────
-
-router.post('/me/invitations/:id/decline', async (req, res) => {
-  try {
-    const { userId } = req.body
-    const user = await User.findById(userId)
-    if (!user) {
-      return res.status(404).json({ error: 'Usuario no encontrado' })
-    }
-    const invitation = user.invitations.id(req.params.id)
-    if (!invitation) {
-      return res.status(404).json({ error: 'Invitación no encontrada' })
-    }
-    if (invitation.status !== 'pendiente') {
-      return res.status(400).json({ error: 'Invitación ya procesada' })
-    }
-    invitation.status = 'rechazada'
-    await user.save()
-    res.json({ message: 'Invitación declinada' })
-  } catch (err) {
-    console.error('Error declining invitation:', err)
-    res.status(500).json({ error: 'Error al declinar invitación' })
+    console.error('Error fetching user by id:', err)
+    res.status(500).json({ error: 'Error al obtener usuario' })
   }
 })
 
 // ── PUT /:id ──────────────────────────────────────────────────────────────────
-
+// Modificar perfil del usuario desde la interfaz
 router.put('/:id', async (req, res) => {
   try {
     const { nombres, apellido_paterno, apellido_materno, email, organizacion, tags, password } = req.body
 
-    // Acepta `roles` (array nuevo) o `rol` (string legado → se convierte)
+    // Mantenemos intacta la lógica de compatibilidad multi-rol que programó tu compañero
     let roles = null
     if (Array.isArray(req.body.roles) && req.body.roles.length > 0) {
       roles = req.body.roles
@@ -161,11 +136,13 @@ router.put('/:id', async (req, res) => {
       roles = [req.body.rol]
     }
 
-    const user = await User.findById(req.params.id)
+    // Buscamos con Sequelize
+    const user = await User.findByPk(req.params.id)
     if (!user) {
       return res.status(404).json({ error: 'Usuario no encontrado' })
     }
 
+    // Mapeamos los campos exactamente igual
     if (nombres) user.nombres = nombres
     if (apellido_paterno) user.apellido_paterno = apellido_paterno
     if (apellido_materno) user.apellido_materno = apellido_materno
@@ -175,14 +152,14 @@ router.put('/:id', async (req, res) => {
     if (tags) user.tags = tags
     if (password) user.password = password
 
+    // Guardamos los cambios en MariaDB
     await user.save()
 
     res.json({
-      id: user._id,
+      id: user.id.toString(),
       nombre: `${user.nombres} ${user.apellido_paterno} ${user.apellido_materno}`,
       email: user.email,
-      roles: user.roles,
-      rol: user.primaryRole
+      roles: user.roles
     })
   } catch (err) {
     console.error('Error updating user:', err)

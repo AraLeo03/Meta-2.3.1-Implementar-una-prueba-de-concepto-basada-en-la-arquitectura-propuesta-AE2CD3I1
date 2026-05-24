@@ -14,7 +14,7 @@
       <span class="avg-value">{{ tiempoPromedio }} días</span>
     </div>
 
-    <div class="section-title">Manuscritos recientes</div>
+    <div class="section-title">Todos los manuscritos</div>
     <div v-if="loading" class="list-card">
       <div class="list-item">Cargando...</div>
     </div>
@@ -22,51 +22,90 @@
       <div v-if="manuscripts.length === 0" class="list-item" style="justify-content: center; color: #999;">
         No hay manuscritos en el sistema.
       </div>
-      <div v-for="m in manuscripts" :key="m.id || m._id" class="list-item">
+      <div v-for="m in manuscripts" :key="m.id" class="list-item">
         <div class="bn-title">
           {{ m.title }}
-          <small>{{ formatAuthors(m.authors) }}</small>
-          <small v-if="m.reviewers && m.reviewers.length > 0" style="color: var(--blue); margin-top: 4px;">
-            Revisores asignados: {{ m.reviewers.length }}/3
-          </small>
+          <small>{{ m.authors.map(a => a.name).join(', ') }}</small>
         </div>
-        <span class="bn-badge" :class="badgeClass(m.status)">{{ formatStatus(m.status) }}</span>
-        
-        <button 
-          v-if="canAssign(m)" 
-          class="btn-assign" 
-          @click="openAssignModal(m)">
-          Asignar Revisor
-        </button>
+        <div class="bn-badge" :class="statusClass(m.status)">{{ m.status }}</div>
+        <button class="btn-action" @click="openAssignModal(m)">Asignar Revisor</button>
       </div>
     </div>
 
     <div v-if="showModal" class="modal-overlay">
-      <div class="modal-content">
-        <h2 style="margin-top:0; font-size:18px;">Asignar Revisor</h2>
-        <p style="font-size:13px; color:#666; margin-bottom:15px;">
-          Manuscrito: <strong>{{ selectedManuscript?.title }}</strong>
-        </p>
-        
-        <div style="margin-bottom: 20px;">
-          <label style="display:block; font-size:12px; margin-bottom:5px; font-weight: bold;">Selecciona el revisor:</label>
-          <select v-model="selectedReviewerId" style="width:100%; padding:8px; border:1px solid #ccc; border-radius:4px; font-family: inherit;">
-            <option value="">-- Seleccione un revisor --</option>
-            <option v-for="rev in reviewers" :key="rev.id || rev._id" :value="rev.id || rev._id">
-              {{ rev.nombres }} {{ rev.apellido_paterno }} ({{ rev.organizacion }})
-            </option>
-          </select>
+      <div class="modal-content modal-large">
+        <div class="modal-header">
+          <h2>Asignar Revisor a: {{ selectedManuscript?.title }}</h2>
+          <button class="close-btn" @click="closeModal">&times;</button>
         </div>
 
-        <div style="display:flex; justify-content:flex-end; gap:10px;">
-          <button style="padding:8px 16px; border:none; border-radius:4px; cursor:pointer; background:#eee;" @click="showModal = false">
-            Cancelar
-          </button>
+        <div class="modal-body grid-2-col">
+          <div class="ia-section">
+            <ReviewerSuggestions 
+              :manuscriptId="selectedManuscript?.id"
+              :manuscriptTitle="selectedManuscript?.title"
+              :manuscriptAbstract="selectedManuscript?.description"
+              :manuscriptTags="selectedManuscript?.tags"
+              :assignedReviewers="selectedManuscript?.reviewers"
+              :manuscriptAuthor="selectedManuscript?.authors[0]"
+              @assign="handleIAAssign"
+            />
+          </div>
+
+          <div class="manual-section">
+            <h3 class="sub-title">Selección Manual</h3>
+            <div class="form-group">
+              <input type="text" v-model="searchQuery" placeholder="Buscar revisor por nombre o tag..." />
+            </div>
+            
+            <div class="revisores-list">
+              <div v-if="loadingRevisores" class="rev-loading">Buscando revisores...</div>
+              <div v-else-if="filteredRevisores.length === 0" class="rev-empty">No se encontraron revisores</div>
+              <div 
+                v-for="r in filteredRevisores" 
+                :key="r.id" 
+                class="revisor-item"
+                :class="{ 
+                  'selected': selectedRevisorId === r.id, 
+                  'assigned': isAlreadyAssigned(r.id),
+                  'conflict-border': checkConflict(r)
+                }"
+                @click="!isAlreadyAssigned(r.id) && selectRevisor(r)"
+              >
+                <div class="rev-name">{{ r.nombre }}</div>
+                <div class="rev-org">{{ r.organizacion }}</div>
+                <div v-if="checkConflict(r)" class="conflict-tag">⚠️ Conflicto de Interés</div>
+                <div v-if="isAlreadyAssigned(r.id)" class="rev-assigned">Ya asignado</div>
+                <div class="rev-tags">
+                  <span v-for="tag in r.tags" :key="tag" class="tag-chip">{{ tag }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          <button class="btn-secondary" @click="closeModal">Cancelar</button>
           <button 
-            style="padding:8px 16px; border:none; border-radius:4px; background:var(--green); color:white; cursor:pointer; font-weight: bold;" 
-            @click="confirmAssignment">
-            {{ processing ? 'Guardando...' : 'Confirmar' }}
+            class="btn-primary" 
+            :disabled="!selectedRevisorId || isAssigning" 
+            @click="processAssignment"
+          >
+            {{ isAssigning ? 'Asignando...' : 'Confirmar Asignación Manual' }}
           </button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="showConflictConfirm" class="modal-overlay z-top">
+      <div class="modal-content modal-alert">
+        <div class="alert-icon">⚠️</div>
+        <h3>Conflicto de Interés Detectado</h3>
+        <p>El revisor <strong>{{ pendingRevisor?.nombre }}</strong> pertenece a la misma organización que el autor ({{ selectedManuscript?.authors[0]?.affiliation }}).</p>
+        <p class="alert-note">¿Desea forzar la asignación de todos modos? Esto quedará registrado en el historial.</p>
+        <div class="modal-actions">
+          <button class="btn-secondary" @click="showConflictConfirm = false">Cancelar</button>
+          <button class="btn-danger" @click="confirmForcedAssignment">Sí, Forzar Asignación</button>
         </div>
       </div>
     </div>
@@ -74,153 +113,197 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import axios from 'axios'
+import ReviewerSuggestions from '@/shared/components/ReviewerSuggestions.vue'
 import { useAppStore } from '@/shared/stores/appStore'
 
-const store = useAppStore()
-const API_URL = '/api/manuscripts'
-const USERS_URL = '/api/users'
-
 const manuscripts = ref([])
-const reviewers = ref([]) 
+const revisores = ref([])
 const loading = ref(true)
-const processing = ref(false)
+const loadingRevisores = ref(false)
 const showModal = ref(false)
-const selectedManuscript = ref(null)
-const selectedReviewerId = ref('')
+const showConflictConfirm = ref(false)
+const isAssigning = ref(false)
 
-onMounted(async () => {
-  await fetchData()
+const selectedManuscript = ref(null)
+const selectedRevisorId = ref(null)
+const pendingRevisor = ref(null)
+const searchQuery = ref('')
+
+const metricas = ref({ total: 0, enProceso: 0, aceptados: 0, rechazados: 0 })
+const tiempoPromedio = ref(0)
+
+const store = useAppStore() // <--- NUEVA LÍNEA
+
+const axiosConfig = computed(() => ({
+  headers: {
+    Authorization: `Bearer ${store.token}`
+  }
+}))
+
+onMounted(() => {
+  fetchManuscripts()
+  fetchRevisores()
 })
 
-async function fetchData() {
-  loading.value = true
+async function fetchManuscripts() {
   try {
-    const [resM, resU] = await Promise.all([
-      axios.get(API_URL),
-      axios.get(USERS_URL)
-    ])
-    manuscripts.value = resM.data
-    reviewers.value = resU.data.filter(u => u.rol === 'revisor')
-  } catch (err) {
-    console.error('Error al cargar datos:', err)
-  } finally {
-    loading.value = false
-  }
+    const res = await axios.get('/api/manuscripts', axiosConfig.value)
+    manuscripts.value = res.data
+    updateMetricas()
+  } catch (err) { console.error(err) }
+  finally { loading.value = false }
 }
 
-async function confirmAssignment() {
-  // 1. OBLIGAMOS A QUE AVISE SI ALGO FALTA
-  if (!selectedReviewerId.value) {
-    store.pushToast('⚠️ Por favor, selecciona un revisor de la lista desplegable');
-    return;
-  }
-  
-  processing.value = true;
-  const mId = selectedManuscript.value.id || selectedManuscript.value._id;
-  const rId = selectedReviewerId.value;
-  
-  console.log(`Intentando asignar revisor ${rId} al manuscrito ${mId}`);
-  
+async function fetchRevisores() {
+  loadingRevisores.value = true
   try {
-    const res = await axios.post(`${API_URL}/${mId}/assign-reviewer`, {
-      reviewerId: rId
-    });
-    
-    console.log('Respuesta del servidor:', res.data);
-    store.pushToast('¡Revisor asignado con éxito!');
-    showModal.value = false;
-    await fetchData(); 
-  } catch (err) {
-    console.error('Error del servidor:', err.response || err);
-    store.pushToast(err.response?.data?.error || 'Error al asignar el revisor en el servidor');
-  } finally {
-    processing.value = false;
-  }
+    const res = await axios.get('/api/users?rol=revisor', axiosConfig.value)
+    revisores.value = res.data
+  } catch (err) { console.error(err) }
+  finally { loadingRevisores.value = false }
 }
+
+function updateMetricas() {
+  metricas.value.total = manuscripts.value.length
+  metricas.value.enProceso = manuscripts.value.filter(m => m.status === 'en_revision').length
+  metricas.value.aceptados = manuscripts.value.filter(m => m.status === 'aceptado').length
+  metricas.value.rechazados = manuscripts.value.filter(m => m.status === 'rechazado').length
+  tiempoPromedio.value = 14 // Mock
+}
+
+const filteredRevisores = computed(() => {
+  const q = searchQuery.value.toLowerCase()
+  return revisores.value.filter(r => 
+    r.nombre.toLowerCase().includes(q) || 
+    r.tags.some(t => t.toLowerCase().includes(q))
+  )
+})
 
 function openAssignModal(m) {
   selectedManuscript.value = m
-  selectedReviewerId.value = ''
+  selectedRevisorId.value = null
   showModal.value = true
 }
 
-function canAssign(m) {
-  const revs = m.reviewers?.length || 0;
-  const status = (m.status || '').toLowerCase();
-  return revs < 3 && status !== 'aceptado' && status !== 'rechazado';
+function closeModal() {
+  showModal.value = false
+  selectedManuscript.value = null
 }
 
-function formatAuthors(authors) {
-  if (!authors) return 'Sin autor'
-  if (Array.isArray(authors)) {
-    return authors.map(a => typeof a === 'object' ? (a.name || a.nombres) : a).join(', ')
+function isAlreadyAssigned(revId) {
+  return selectedManuscript.value?.reviewers?.some(r => r.reviewerId === revId.toString())
+}
+
+function checkConflict(revisor) {
+  const authorOrg = selectedManuscript.value?.authors[0]?.affiliation?.trim().toLowerCase()
+  const revOrg = revisor.organizacion?.trim().toLowerCase()
+  return authorOrg && revOrg && authorOrg === revOrg
+}
+
+function selectRevisor(r) {
+  selectedRevisorId.value = r.id
+  pendingRevisor.value = r
+}
+
+// Maneja la asignación desde el componente de IA
+function handleIAAssign(revId, hasConflict) {
+  const rev = revisores.value.find(r => r.id === revId)
+  pendingRevisor.value = rev
+  selectedRevisorId.value = revId
+  
+  if (hasConflict) {
+    showConflictConfirm.value = true
+  } else {
+    processAssignment(false)
   }
-  return authors
 }
 
-function formatStatus(status) {
-  if (!status) return 'Enviado';
-  const s = status.toLowerCase();
-  if (s === 'en_revision') return 'En revisión';
-  return status.charAt(0).toUpperCase() + status.slice(1);
+// Maneja la asignación desde el botón "Confirmar Manual"
+function processAssignment() {
+  if (checkConflict(pendingRevisor.value)) {
+    showConflictConfirm.value = true
+  } else {
+    confirmForcedAssignment(false)
+  }
 }
 
-function badgeClass(status) {
-  const s = (status || 'enviado').toLowerCase()
-  if (s === 'rechazado') return 'bn-badge bn-critical'
-  if (s === 'aceptado') return 'bn-badge bn-ok'
-  return 'bn-badge bn-warn'
+async function confirmForcedAssignment(forced = true) {
+  isAssigning.value = true
+  try {
+    await axios.post(`/api/manuscripts/${selectedManuscript.value.id}/assign-reviewer`, {
+      reviewerId: selectedRevisorId.value,
+      hasConflict: forced
+    }, axiosConfig.value)
+    alert('Revisor asignado exitosamente')
+    showConflictConfirm.value = false
+    closeModal()
+    fetchManuscripts()
+  } catch (err) {
+    alert(err.response?.data?.error || 'Error al asignar')
+  } finally {
+    isAssigning.value = false
+  }
 }
 
-const metricas = computed(() => ({
-  total: manuscripts.value.length,
-  enProceso: manuscripts.value.filter(m => !['aceptado', 'rechazado'].includes((m.status || '').toLowerCase())).length,
-  aceptados: manuscripts.value.filter(m => (m.status || '').toLowerCase() === 'aceptado').length,
-  rechazados: manuscripts.value.filter(m => (m.status || '').toLowerCase() === 'rechazado').length
-}))
-
-const tiempoPromedio = computed(() => manuscripts.value.length > 0 ? 14 : 0)
+function statusClass(s) {
+  if (s === 'aceptado') return 'bn-ok'
+  if (s === 'rechazado') return 'bn-critical'
+  if (s === 'en_revision') return 'bn-warn'
+  return ''
+}
 </script>
 
 <style scoped>
-.ej-container { max-width: 680px; margin: 0 auto; }
-.ej-title { font-size: 20px; font-weight: 600; margin-bottom: 20px; }
-.metrics-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
-.metric-card { background: white; border-radius: var(--radius); padding: 16px; border: 1px solid var(--border); }
-.metric-label { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
-.metric-value { font-size: 28px; font-weight: 600; }
-.c-default { color: var(--text); }
-.c-yellow { color: var(--yellow); }
-.c-green { color: var(--green); }
-.c-red { color: var(--red); }
-.avg-card { background: white; border-radius: var(--radius); padding: 16px; border: 1px solid var(--border); margin-bottom: 28px; display: flex; justify-content: space-between; align-items: center; }
-.avg-label { font-size: 13px; color: var(--muted); }
-.avg-value { font-size: 22px; font-weight: 600; color: var(--blue); }
-.section-title { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 8px; }
-.list-card { background: white; border-radius: var(--radius); border: 1px solid var(--border); overflow: hidden; margin-bottom: 28px; }
-.list-item { display: flex; align-items: center; gap: 12px; padding: 13px 16px; border-bottom: 1px solid var(--light); }
-.list-item:last-child { border-bottom: none; }
-.bn-title { flex: 1; font-size: 14px; line-height: 1.3; }
-.bn-title small { display: block; font-size: 11px; color: #aaa; margin-top: 2px; }
-.bn-badge { font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 20px; white-space: nowrap; }
-.bn-critical { background: var(--red-soft); color: var(--red); }
-.bn-warn { background: var(--yellow-soft); color: var(--yellow); }
-.bn-ok { background: var(--green-soft); color: var(--green); }
+/* Estilos base del Editor Jefe */
+.ej-container { padding: 32px; max-width: 1100px; margin: 0 auto; font-family: 'Inter', sans-serif; background: #f9fafb; min-height: 100vh; }
+.ej-title { font-size: 28px; font-weight: 800; color: #111827; margin-bottom: 24px; }
 
-.btn-assign {
-  background: var(--blue, #3498db);
-  color: white;
-  border: none;
-  padding: 6px 12px;
-  border-radius: 4px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  margin-left: 10px;
-}
+.metrics-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+.metric-card { background: white; padding: 20px; border-radius: 12px; border: 1px solid #e5e7eb; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+.metric-label { font-size: 12px; font-weight: 600; color: #6b7280; text-transform: uppercase; margin-bottom: 8px; }
+.metric-value { font-size: 32px; font-weight: 800; }
+.c-yellow { color: #d97706; } .c-green { color: #059669; } .c-red { color: #dc2626; } .c-default { color: #111827; }
 
-.modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; }
-.modal-content { background: white; padding: 25px; border-radius: 8px; width: 400px; max-width: 90%; }
+.avg-card { background: #eff6ff; padding: 16px 24px; border-radius: 12px; border: 1px solid #dbeafe; display: flex; justify-content: space-between; align-items: center; margin-bottom: 32px; }
+.avg-label { font-size: 14px; font-weight: 600; color: #1e40af; }
+.avg-value { font-size: 20px; font-weight: 800; color: #1d4ed8; }
+
+.section-title { font-size: 14px; font-weight: 700; color: #4b5563; text-transform: uppercase; margin-bottom: 12px; }
+.list-card { background: white; border-radius: 12px; border: 1px solid #e5e7eb; overflow: hidden; }
+.list-item { display: flex; align-items: center; gap: 16px; padding: 16px; border-bottom: 1px solid #f3f4f6; }
+.bn-title { flex: 1; font-weight: 600; font-size: 15px; color: #111827; }
+.bn-title small { display: block; font-weight: 400; color: #6b7280; font-size: 12px; margin-top: 2px; }
+
+.bn-badge { padding: 4px 10px; border-radius: 99px; font-size: 12px; font-weight: 600; text-transform: capitalize; }
+.bn-ok { background: #d1fae5; color: #065f46; }
+.bn-warn { background: #fef3c7; color: #92400e; }
+.bn-critical { background: #fee2e2; color: #991b1b; }
+
+.btn-action { background: #4f46e5; color: white; border: none; padding: 8px 16px; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 13px; }
+
+/* MODAL STYLES */
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 20px; }
+.z-top { z-index: 200; }
+.modal-content { background: white; border-radius: 16px; width: 100%; max-width: 600px; max-height: 90vh; display: flex; flex-direction: column; overflow: hidden; }
+.modal-large { max-width: 1000px; }
+.modal-header { padding: 20px; border-bottom: 1px solid #e5e7eb; display: flex; justify-content: space-between; align-items: center; }
+.modal-body { padding: 20px; overflow-y: auto; flex: 1; }
+.grid-2-col { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+
+.revisores-list { height: 350px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; }
+.revisor-item { padding: 12px; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 8px; cursor: pointer; }
+.revisor-item.selected { border-color: #4f46e5; background: #f5f3ff; }
+.revisor-item.conflict-border { border-left: 4px solid #ef4444; }
+.conflict-tag { color: #ef4444; font-size: 11px; font-weight: 700; margin-top: 4px; }
+
+.modal-actions { padding: 20px; border-top: 1px solid #e5e7eb; display: flex; justify-content: flex-end; gap: 12px; }
+.btn-primary { background: #4f46e5; color: white; border: none; padding: 10px 20px; border-radius: 8px; font-weight: 600; cursor: pointer; }
+.btn-secondary { background: white; border: 1px solid #d1d5db; color: #374151; padding: 10px 20px; border-radius: 8px; font-weight: 600; cursor: pointer; }
+.btn-danger { background: #ef4444; color: white; border: none; padding: 10px 20px; border-radius: 8px; font-weight: 600; cursor: pointer; }
+
+.modal-alert { text-align: center; padding: 32px; max-width: 400px; }
+.alert-icon { font-size: 48px; margin-bottom: 16px; }
+.alert-note { font-size: 13px; color: #6b7280; margin-top: 12px; }
 </style>

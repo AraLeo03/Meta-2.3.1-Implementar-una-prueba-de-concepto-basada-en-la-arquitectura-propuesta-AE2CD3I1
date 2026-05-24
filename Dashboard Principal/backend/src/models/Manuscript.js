@@ -7,7 +7,7 @@ const authorSchema = new mongoose.Schema({
 }, { _id: false })
 
 const reviewerAssignmentSchema = new mongoose.Schema({
-  reviewerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  reviewerId: { type: String, required: true },
   reviewerName: { type: String, default: '' },
   status: { 
     type: String, 
@@ -17,7 +17,8 @@ const reviewerAssignmentSchema = new mongoose.Schema({
   assignedAt: { type: Date, default: Date.now },
   deadline: { type: Date, default: null },
   completedAt: { type: Date, default: null },
-  verdict: { type: String, default: null }
+  verdict: { type: String, default: null },
+  hasConflict: { type: Boolean, default: false }
 }, { _id: false })
 
 const manuscriptSchema = new mongoose.Schema({
@@ -27,13 +28,18 @@ const manuscriptSchema = new mongoose.Schema({
   tags: { type: [String], default: [] },
   pdfPath: { type: String, required: true },
   pdfName: { type: String, required: true },
-  authorId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  authorId: { type: String, required: true },
   status: { 
     type: String, 
     enum: ['enviado', 'en_revision', 'decision', 'aceptado', 'rechazado'],
     default: 'enviado'
   },
   reviewers: { type: [reviewerAssignmentSchema], default: [] },
+  history: [{
+    action: { type: String },
+    details: { type: String },
+    date: { type: Date, default: Date.now }
+  }],
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
 })

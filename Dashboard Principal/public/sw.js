@@ -5,7 +5,7 @@
 //   • Navegación (HTML)                            → Network First con fallback offline
 // ─────────────────────────────────────────────────────────────────────────────
 
-const CACHE_NAME    = 'peerreview-v1'
+const CACHE_NAME    = 'peerreview-v3'
 const OFFLINE_URL   = '/offline.html'
 
 // Recursos que se pre-cachean al instalar el SW

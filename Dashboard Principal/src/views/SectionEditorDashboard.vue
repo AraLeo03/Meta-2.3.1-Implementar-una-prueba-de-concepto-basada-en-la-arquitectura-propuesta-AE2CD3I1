@@ -53,20 +53,33 @@
               <p>{{ selectedManuscript?.title }}</p>
             </div>
             <div class="modal-body">
+              <ReviewerSuggestions
+                v-if="selectedManuscript"
+                :manuscript-id="selectedManuscript.id"
+                :manuscript-title="selectedManuscript.title"
+                :manuscript-abstract="selectedManuscript.description"
+                :manuscript-tags="selectedManuscript.tags"
+                :assigned-reviewers="selectedManuscript.reviewers"
+                :manuscript-author="selectedManuscript.author"
+                @assign="(id, hasConflict) => assignReviewerById(id, hasConflict)"
+              />
+
+              <div class="manual-search-label">O busca manualmente</div>
               <div class="form-group">
                 <label>Buscar revisor por nombre o tema</label>
                 <input v-model="searchFilter" type="text" placeholder="Buscar...">
               </div>
                 <div class="revisores-list">
                 <div v-if="reviewersLoading" class="rev-loading">Cargando revisores...</div>
-                <div v-else-if="reviewers.length === 0" class="rev-empty">No hay revisores disponibles</div>
-                <div v-else v-for="r in reviewers" :key="r.id" 
+                <div v-else-if="reviewersWithConflict.length === 0" class="rev-empty">No hay revisores disponibles</div>
+                <div v-else v-for="r in reviewersWithConflict" :key="r.id" 
                   class="revisor-item" 
-                  :class="{ selected: selectedReviewer === r.id, assigned: isAssignedToCurrentManuscript(r.id) }"
+                  :class="{ selected: selectedReviewer === r.id, assigned: isAssignedToCurrentManuscript(r.id), 'conflict-border': r.tieneConflicto }"
                   @click="selectReviewer(r.id)">
                   <div class="rev-info">
                     <div class="rev-name">{{ r.nombre }}</div>
                     <div class="rev-org">{{ r.organizacion }}</div>
+                    <div v-if="r.tieneConflicto" class="rev-conflict-tag">⚠️ Conflicto de Interés</div>
                     <div class="rev-tags">
                       <span v-for="tag in r.tags" :key="tag" class="tag-chip">{{ tag }}</span>
                     </div>
@@ -85,6 +98,28 @@
         </div>
       </Transition>
     </Teleport>
+
+    <Teleport to="body">
+      <Transition name="fade">
+        <div v-if="showConflictModal" class="modal-overlay" style="z-index: 300;">
+          <div class="modal conflict-modal">
+            <div class="modal-header">
+              <h2 style="color: #ef4444;">⚠️ Advertencia de Conflicto</h2>
+            </div>
+            <div class="modal-body">
+              <p>El revisor seleccionado pertenece a la misma organización o tiene una relación previa con el autor del manuscrito.</p>
+              <p><strong>¿Estás seguro de que deseas asignarlo?</strong> Esta acción quedará registrada en el historial del manuscrito.</p>
+            </div>
+            <div class="modal-actions">
+              <button class="btn-cancel" @click="showConflictModal = false; pendingReviewerId = null">Cancelar</button>
+              <button class="btn-submit btn-danger" @click="confirmAssignment" :disabled="assigning">
+                {{ assigning ? 'Asignando...' : 'Sí, forzar asignación' }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 
@@ -92,6 +127,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import axios from 'axios'
 import { useAppStore } from '@/shared/stores/appStore'
+import ReviewerSuggestions from '@/shared/components/ReviewerSuggestions.vue'
 
 const store = useAppStore()
 const API_URL = '/api/manuscripts'
@@ -105,6 +141,10 @@ const selectedManuscript = ref(null)
 const selectedReviewer = ref(null)
 const searchFilter = ref('')
 const assigning = ref(false)
+
+// Estados para el modal de conflicto
+const showConflictModal = ref(false)
+const pendingReviewerId = ref(null)
 
 let debounceTimer = null
 
@@ -149,6 +189,22 @@ async function fetchReviewers(search = '') {
   }
 }
 
+// Computada para detectar conflictos de forma manual
+const reviewersWithConflict = computed(() => {
+  if (!selectedManuscript.value) return reviewers.value
+  
+  // Asumimos que el backend mandará el objeto author con su organización
+  const authorOrg = selectedManuscript.value.author?.organizacion?.trim().toLowerCase() || ''
+  
+  return reviewers.value.map(r => {
+    const revOrg = (r.organizacion || '').trim().toLowerCase()
+    return {
+      ...r,
+      tieneConflicto: authorOrg && revOrg === authorOrg
+    }
+  })
+})
+
 function openAssignModal(m) {
   selectedManuscript.value = m
   selectedReviewer.value = null
@@ -177,17 +233,46 @@ function canAssignReviewer(m) {
   return !m.reviewers || m.reviewers.length < 3
 }
 
+// Función receptora (Manual o IA)
+async function assignReviewerById(reviewerId, hasConflict = false) {
+  if (!selectedManuscript.value || assigning.value) return
+  
+  if (hasConflict) {
+    pendingReviewerId.value = reviewerId
+    showConflictModal.value = true
+    return // Pausamos la ejecución para esperar el click del modal
+  }
+
+  await executeAssignment(reviewerId, false)
+}
+
+// Botón de la lista manual
 async function assignReviewer() {
   if (!selectedReviewer.value || !selectedManuscript.value || assigning.value) return
-  
+  const reviewer = reviewersWithConflict.value.find(r => r.id === selectedReviewer.value)
+  await assignReviewerById(selectedReviewer.value, reviewer?.tieneConflicto)
+}
+
+// Confirmación del modal de conflicto
+async function confirmAssignment() {
+  if (pendingReviewerId.value) {
+    await executeAssignment(pendingReviewerId.value, true)
+  }
+}
+
+// Ejecución real de la asignación
+async function executeAssignment(reviewerId, forcedByConflict = false) {
   assigning.value = true
   try {
     await axios.post(`${API_URL}/${selectedManuscript.value.id}/assign-reviewer`, {
-      reviewerId: selectedReviewer.value
+      reviewerId,
+      hasConflict: forcedByConflict // Le pasamos la bandera al backend
     })
     store.pushToast('Revisor asignado correctamente')
     await fetchManuscripts()
     closeAssignModal()
+    showConflictModal.value = false
+    pendingReviewerId.value = null
   } catch (err) {
     console.error('Error assigning reviewer:', err)
     store.pushToast('Error al asignar revisor')
@@ -204,6 +289,7 @@ const contadores = computed(() => ({
 </script>
 
 <style scoped>
+/* (Mantén todo tu CSS original aquí y solo agrega lo de abajo) */
 .se-container { max-width: 720px; margin: 0 auto; }
 .se-title { font-size: 20px; font-weight: 600; margin-bottom: 20px; }
 .counters-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 28px; }
@@ -240,18 +326,26 @@ const contadores = computed(() => ({
 .modal-header { padding: 24px 24px 10px; }
 .modal-header h2 { font-size: 20px; font-weight: 600; margin: 0 0 6px; }
 .modal-header p { font-size: 13px; color: var(--muted); margin: 0; }
-.modal-body { padding: 16px 24px; max-height: 400px; overflow-y: auto; }
+.modal-body { padding: 16px 24px; max-height: 500px; overflow-y: auto; }
+.manual-search-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 10px; padding-top: 4px; border-top: 1px solid var(--light); }
 .form-group { margin-bottom: 16px; }
 .form-group label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 8px; }
 .form-group input { width: 100%; border: 1.5px solid var(--border); border-radius: 10px; padding: 12px 14px; font-size: 14px; outline: none; }
 .form-group input:focus { border-color: var(--blue); }
-.revisores-list { max-height: 300px; overflow-y: auto; }
+.revisores-list { max-height: 200px; overflow-y: auto; }
 .rev-loading, .rev-empty { padding: 20px; text-align: center; color: var(--muted); font-size: 13px; }
 .revisor-item { padding: 12px; border: 2px solid var(--border); border-radius: 10px; margin-bottom: 8px; cursor: pointer; }
 .revisor-item:hover:not(.assigned) { background: var(--light); }
 .revisor-item.selected { border-color: var(--blue); background: var(--blue-soft); }
 .revisor-item.assigned { opacity: 0.7; cursor: not-allowed; border-color: var(--green); background: #f0fdf4; }
-.revisor-item.assigned:hover { background: #f0fdf4; }
+
+/* NUEVAS CLASES PARA CONFLICTO */
+.conflict-border { border-left: 4px solid #ef4444; background-color: #fff5f5; }
+.rev-conflict-tag { color: #ef4444; font-size: 11px; font-weight: 600; margin: 4px 0; }
+.conflict-modal { max-width: 400px; }
+.btn-danger { background-color: #ef4444 !important; }
+.btn-danger:hover { background-color: #dc2626 !important; }
+
 .rev-assigned { font-size: 11px; color: var(--green); font-weight: 600; margin-top: 4px; }
 .rev-name { font-size: 14px; font-weight: 500; }
 .rev-org { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
