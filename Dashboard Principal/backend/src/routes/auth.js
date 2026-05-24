@@ -1,134 +1,127 @@
 import express from 'express'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
-import pool from '../db.js'
 import User from '../models/User.js'
 
 const router = express.Router()
 const JWT_SECRET = process.env.JWT_SECRET || 'peer-review-secret-key-2024'
 
-async function queryDB(sql, params = []) {
-  let conn
-  try {
-    conn = await pool.getConnection()
-    const result = await conn.query(sql, params)
-    return result
-  } finally {
-    if (conn) conn.release()
-  }
-}
+// ── HELPERS ──────────────────────────────────────────────────────────────────
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-/**
- * Normaliza el campo de roles: acepta tanto `roles` (array nuevo)
- * como `rol` (string legado) para mantener compatibilidad con clientes
- * que todavía envíen el campo antiguo.
- */
 function parseRoles(body) {
   if (Array.isArray(body.roles) && body.roles.length > 0) return body.roles
   if (typeof body.roles === 'string') return [body.roles]
-  if (typeof body.rol === 'string') return [body.rol]  // compatibilidad legada
-  return null
+  if (typeof body.rol === 'string') return [body.rol]
+  return ['autor']
 }
 
-/**
- * Formatea un documento User para la respuesta JSON.
- * Siempre devuelve `roles` (array). Incluye `rol` como alias
- * del rol primario para no romper clientes antiguos.
- */
 function formatUser(user) {
-  const ROLE_PRIORITY = ['admin', 'editor_jefe', 'editor_seccion', 'revisor', 'autor']
-  const primaryRole = ROLE_PRIORITY.find(r => user.roles.includes(r)) || user.roles[0]
-  return {
-    id: user._id,
-    email: user.email,
-    nombres: user.nombres,
-    apellidoPaterno: user.apellido_paterno,
-    apellidoMaterno: user.apellido_materno,
-    roles: user.roles,          // ← nuevo campo (array)
-    rol: primaryRole,           // ← alias legado (rol de mayor prioridad)
-    organizacion: user.organizacion,
-    tags: user.tags
+  try {
+    const ROLE_PRIORITY = ['admin', 'editor_jefe', 'editor_seccion', 'revisor', 'autor']
+    const rolesArray = Array.isArray(user.roles) ? user.roles : []
+    const primaryRole = ROLE_PRIORITY.find(r => rolesArray.includes(r)) || (rolesArray[0] || 'autor')
+
+    return {
+      id: user.id.toString(),
+      email: user.email,
+      nombres: user.nombres,
+      apellido_paterno: user.apellido_paterno,
+      apellido_materno: user.apellido_materno,
+      nombre: `${user.nombres} ${user.apellido_paterno} ${user.apellido_materno}`,
+      roles: rolesArray,
+      rol: primaryRole,
+      organizacion: user.organizacion,
+      tags: user.tags || [],
+      afiliaciones_previas: user.afiliaciones_previas || []
+    }
+  } catch (err) {
+    console.error('Error formateando usuario:', err)
+    return { email: user.email, id: user.id }
   }
 }
 
-// ── POST /register ────────────────────────────────────────────────────────────
+// ── RUTAS ─────────────────────────────────────────────────────────────────────
 
+// POST /register
 router.post('/register', async (req, res) => {
-  const { email, nombres, apellidoPaterno, apellidoMaterno, organizacion, password, tags } = req.body
-
-  const roles = parseRoles(req.body)
-
-  if (!email || !nombres || !apellidoPaterno || !apellidoMaterno || !roles || !organizacion || !password) {
-    return res.status(400).json({ message: 'Todos los campos son requeridos' })
-  }
-
-  const validRoles = ['autor', 'revisor', 'editor_seccion', 'editor_jefe', 'admin']
-  const invalidRoles = roles.filter(r => !validRoles.includes(r))
-  if (invalidRoles.length > 0) {
-    return res.status(400).json({ message: `Roles inválidos: ${invalidRoles.join(', ')}` })
-  }
-
+  console.log('>>> [AUTH] Intento de registro para:', req.body.email)
+  
   try {
-    const existingUser = await User.findOne({ email })
-    if (existingUser) {
-      return res.status(400).json({ message: 'El correo electrónico ya está registrado' })
+    const { 
+      email, password, nombres, organizacion, 
+      apellido_paterno, apellidoPaterno, 
+      apellido_materno, apellidoMaterno 
+    } = req.body
+
+    const final_ap_paterno = apellido_paterno || apellidoPaterno
+    const final_ap_materno = apellido_materno || apellidoMaterno
+    const roles = parseRoles(req.body)
+
+    // Validación de seguridad
+    if (!email || !password || !nombres || !final_ap_paterno || !organizacion) {
+      console.warn('>>> [AUTH] Registro rechazado: Faltan campos')
+      return res.status(400).json({ message: 'Faltan campos obligatorios' })
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10)
+    // Búsqueda de usuario existente
+    const existingUser = await User.findOne({ where: { email } })
+    if (existingUser) {
+      return res.status(400).json({ message: 'El correo ya está registrado' })
+    }
 
-    const newUser = new User({
+    // Hash
+    const salt = await bcrypt.genSalt(10)
+    const hashedPassword = await bcrypt.hash(password, salt)
+
+    // Inserción en DB
+    console.log('>>> [AUTH] Intentando crear registro en MariaDB...')
+    const newUser = await User.create({
       email,
+      password: hashedPassword,
       nombres,
-      apellido_paterno: apellidoPaterno,
-      apellido_materno: apellidoMaterno,
-      roles,               // ← array de roles
+      apellido_paterno: final_ap_paterno,
+      apellido_materno: final_ap_materno || '',
       organizacion,
-      tags: tags || [],
-      password: hashedPassword
+      roles,
+      afiliaciones_previas: [],
+      tags: [],
+      keywords: []
     })
 
-    await newUser.save()
+    console.log('>>> [AUTH] Registro exitoso para:', email)
+    return res.status(201).json({
+      message: 'Usuario registrado exitosamente',
+      user: formatUser(newUser)
+    })
 
-    res.status(201).json({ message: 'Usuario registrado exitosamente' })
   } catch (error) {
-    console.error('Error en registro:', error)
-    res.status(500).json({ message: 'Error al registrar usuario' })
+    // ESTO ES LO MÁS IMPORTANTE: Ver el error real en la terminal
+    console.error('!!! [AUTH] ERROR FATAL EN REGISTRO:', error)
+    
+    // Si el error es de Sequelize, suele traer más detalles en 'parent' o 'original'
+    const detail = error.parent || error.original || error
+    console.error('Detalles del error:', detail)
+
+    return res.status(500).json({ 
+      message: 'Error interno en el servidor',
+      dev_details: error.message 
+    })
   }
 })
 
-// ── POST /login ───────────────────────────────────────────────────────────────
-
+// POST /login
 router.post('/login', async (req, res) => {
-  const { email, password } = req.body
-
-  if (!email || !password) {
-    return res.status(400).json({ message: 'Correo y contraseña son requeridos' })
-  }
-
   try {
-    const user = await User.findOne({ email })
-    if (!user) {
-      return res.status(401).json({ message: 'Usuario no encontrado' })
-    }
+    const { email, password } = req.body
+    const user = await User.findOne({ where: { email } })
+    
+    if (!user) return res.status(401).json({ message: 'Usuario no encontrado' })
 
     const validPassword = await bcrypt.compare(password, user.password)
-    if (!validPassword) {
-      return res.status(401).json({ message: 'Contraseña incorrecta' })
-    }
-
-    // El JWT incluye `roles` (array) y `rol` (rol primario) para compatibilidad
-    const ROLE_PRIORITY = ['admin', 'editor_jefe', 'editor_seccion', 'revisor', 'autor']
-    const primaryRole = ROLE_PRIORITY.find(r => user.roles.includes(r)) || user.roles[0]
+    if (!validPassword) return res.status(401).json({ message: 'Contraseña incorrecta' })
 
     const token = jwt.sign(
-      {
-        id: user._id.toString(),
-        email: user.email,
-        roles: user.roles,   // ← nuevo
-        rol: primaryRole     // ← alias legado
-      },
+      { id: user.id.toString(), email: user.email, roles: user.roles },
       JWT_SECRET,
       { expiresIn: '24h' }
     )
@@ -140,28 +133,20 @@ router.post('/login', async (req, res) => {
   }
 })
 
-// ── GET /me ───────────────────────────────────────────────────────────────────
-
+// GET /me
 router.get('/me', async (req, res) => {
-  const authHeader = req.headers.authorization
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ message: 'No autorizado' })
-  }
-
-  const token = authHeader.split(' ')[1]
-
   try {
+    const authHeader = req.headers.authorization
+    if (!authHeader?.startsWith('Bearer ')) return res.status(401).json({ message: 'No autorizado' })
+    
+    const token = authHeader.split(' ')[1]
     const decoded = jwt.verify(token, JWT_SECRET)
-    const user = await User.findById(decoded.id).select('-password')
+    const user = await User.findByPk(decoded.id)
 
-    if (!user) {
-      return res.status(401).json({ message: 'Usuario no encontrado' })
-    }
-
+    if (!user) return res.status(401).json({ message: 'Usuario no encontrado' })
     res.json({ user: formatUser(user) })
   } catch (error) {
-    console.error('Error en /me:', error)
-    res.status(401).json({ message: 'Token inválido' })
+    res.status(401).json({ message: 'Sesión expirada' })
   }
 })
 

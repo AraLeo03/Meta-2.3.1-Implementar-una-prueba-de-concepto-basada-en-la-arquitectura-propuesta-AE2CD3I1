@@ -243,7 +243,7 @@ router.get('/:id/download', async (req, res) => {
 
 router.post('/:id/assign-reviewer', async (req, res) => {
   try {
-    const { reviewerId } = req.body
+    const { reviewerId, hasConflict } = req.body
     const manuscriptId = req.params.id
 
     if (!reviewerId) {
@@ -255,7 +255,7 @@ router.post('/:id/assign-reviewer', async (req, res) => {
       return res.status(404).json({ error: 'Manuscrito no encontrado' })
     }
 
-    const reviewer = await User.findById(reviewerId)
+    const reviewer = await User.findByPk(reviewerId)
     // ── MULTI-ROL: se verifica que el usuario tenga el rol 'revisor' ────────
     if (!reviewer || !reviewer.roles.includes('revisor')) {
       return res.status(400).json({ error: 'Revisor no válido' })
@@ -274,19 +274,33 @@ router.post('/:id/assign-reviewer', async (req, res) => {
     }
 
     manuscript.reviewers.push({
-      reviewerId: new mongoose.Types.ObjectId(reviewerId),
+      reviewerId: reviewerId.toString(), 
       reviewerName: `${reviewer.nombres} ${reviewer.apellido_paterno} ${reviewer.apellido_materno}`,
       status: 'pendiente',
       assignedAt: new Date(),
-      deadline: new Date(Date.now() + 21 * 24 * 60 * 60 * 1000)
+      deadline: new Date(Date.now() + 21 * 24 * 60 * 60 * 1000),
+      hasConflict: Boolean(hasConflict)
     })
 
-    reviewer.invitations.push({
-      manuscriptId: manuscript._id,
+    if (!manuscript.history) manuscript.history = []
+    manuscript.history.push({
+      action: 'Revisor Asignado',
+      details: `Se asignó al revisor ${reviewer.nombres} ${reviewer.apellido_paterno}.` + 
+               (hasConflict ? ' [ASIGNADO FORZOSAMENTE IGNORANDO CONFLICTO DE INTERÉS]' : ''),
+      date: new Date()
+    })
+
+    // 2. Manejo seguro de arreglos JSON en Sequelize (MariaDB)
+    const currentInvitations = reviewer.invitations || []
+    currentInvitations.push({
+      manuscriptId: manuscript._id.toString(), // El ID del manuscrito SÍ es de Mongo
       manuscriptTitle: manuscript.title,
       status: 'pendiente'
     })
-
+    
+    // Reasignamos para que Sequelize detecte el cambio en el JSON
+    reviewer.invitations = currentInvitations
+    reviewer.changed('invitations', true) 
     await reviewer.save()
 
     if (manuscript.status === 'enviado') {
@@ -405,7 +419,7 @@ router.delete('/:id/reviewers/:reviewerId', async (req, res) => {
     manuscript.reviewers.splice(reviewerIndex, 1)
     await manuscript.save()
 
-    const reviewer = await User.findById(req.params.reviewerId)
+    const reviewer = await User.findByPk(req.params.reviewerId)
     if (reviewer) {
       reviewer.invitations = reviewer.invitations.filter(inv => 
         inv.manuscriptId.toString() !== manuscript._id.toString()

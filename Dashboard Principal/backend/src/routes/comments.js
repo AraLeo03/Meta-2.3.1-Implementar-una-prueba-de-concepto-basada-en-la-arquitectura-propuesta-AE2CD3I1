@@ -209,7 +209,7 @@ router.post('/:manuscriptId', async (req, res) => {
     const isReviewer = manuscript.reviewers.some(r => r.reviewerId.toString() === caller.id)
     if (!isAuthor && !isReviewer) return res.status(403).json({ error: 'Sin acceso' })
 
-    const user = await User.findById(caller.id).select('nombres apellido_paterno')
+    const user = await User.findByPk(caller.id).select('nombres apellido_paterno')
     if (!user) return res.status(404).json({ error: 'Usuario no encontrado' })
 
     let targetReviewerId

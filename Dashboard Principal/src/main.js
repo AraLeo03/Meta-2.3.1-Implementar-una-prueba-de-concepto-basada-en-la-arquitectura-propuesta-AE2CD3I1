@@ -6,6 +6,8 @@ import App from './App.vue'
 import router from './router'
 import './style.css'
 
+// Configuración global de Axios
+axios.defaults.baseURL = 'http://localhost:3000'
 axios.interceptors.request.use(config => {
   const token = localStorage.getItem('token')
   if (token) {
@@ -15,6 +17,9 @@ axios.interceptors.request.use(config => {
 })
 
 const app = createApp(App)
-app.use(createPinia())
-app.use(router)
-app.mount('#app')
+const pinia = createPinia()
+
+// EL ORDEN ES CRÍTICO:
+app.use(pinia)   // 1. Primero Pinia
+app.use(router)  // 2. Luego Router
+app.mount('#app') // 3. Al final montar
